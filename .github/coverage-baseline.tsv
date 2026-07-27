@@ -1,0 +1,7 @@
+internal/cmd/root.go	29	0
+internal/config/config.go	62	61
+internal/players/detect.go	34	34
+internal/players/players.go	43	43
+internal/players/poller.go	103	87
+internal/server/server.go	169	150
+main.go	5	0
