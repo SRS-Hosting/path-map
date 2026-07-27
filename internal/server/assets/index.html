@@ -79,6 +79,8 @@
     overflow: hidden;
     touch-action: none;
     cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
   }
   #viewport.dragging { cursor: grabbing; }
 
@@ -197,7 +199,7 @@
       <button type="button" id="zoom-reset" aria-label="Reset view">&#8962;</button>
     </div>
     <div id="world">
-      <img id="map" alt="Map background">
+      <img id="map" alt="Map background" draggable="false">
       <div id="markers"></div>
     </div>
   </div>
@@ -321,10 +323,16 @@
   }
 
   viewport.addEventListener("pointerdown", function (event) {
+    if (controls.contains(event.target)) { return; }
+    event.preventDefault();
     viewport.setPointerCapture(event.pointerId);
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (pointers.size === 2) { pinchDist = pinch().dist; }
     viewport.classList.add("dragging");
+  });
+
+  viewport.addEventListener("dragstart", function (event) {
+    event.preventDefault();
   });
 
   viewport.addEventListener("pointermove", function (event) {
