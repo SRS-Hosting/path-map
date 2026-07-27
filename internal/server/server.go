@@ -73,7 +73,7 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 	poller := players.NewPoller(client, cfg.Poller.Interval(), cfg.Poller.IdleAfter(), fixed, lookupPreset)
 
-	page, err := renderPage(client, cfg.Poller.IntervalSeconds, cfg.RCON.TimeoutSeconds)
+	page, err := renderPage(cfg.Poller.IntervalSeconds, cfg.RCON.TimeoutSeconds)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +147,9 @@ func lookupPreset(name string) (players.MapInfo, bool) {
 // renderPage renders the map page once at startup. The page only depends on
 // configuration, which does not change while the process runs; everything
 // runtime-dependent (map name, players) arrives through the API instead.
-func renderPage(client *rcon.Client, intervalSeconds, timeoutSeconds int) ([]byte, error) {
+// Deliberately absent: the RCON address. The page is viewer-facing, and where
+// the game server lives is the operator's business.
+func renderPage(intervalSeconds, timeoutSeconds int) ([]byte, error) {
 	tmpl, err := template.ParseFS(assets, "assets/index.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse embedded page: %w", err)
@@ -155,11 +157,9 @@ func renderPage(client *rcon.Client, intervalSeconds, timeoutSeconds int) ([]byt
 
 	var buf bytes.Buffer
 	data := struct {
-		Target          string
 		IntervalSeconds int
 		TimeoutSeconds  int
 	}{
-		Target:          client.Addr(),
 		IntervalSeconds: intervalSeconds,
 		TimeoutSeconds:  timeoutSeconds,
 	}

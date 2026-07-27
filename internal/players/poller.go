@@ -174,7 +174,7 @@ func (p *Poller) poll(ctx context.Context) {
 	p.mu.Lock()
 	p.snap = &snap
 	if err != nil {
-		p.errMsg = err.Error()
+		p.errMsg = publicMessage(err)
 	} else {
 		p.errMsg = ""
 	}
@@ -256,9 +256,26 @@ func (p *Poller) execute(ctx context.Context, command string) (string, error) {
 func (p *Poller) fail(msg string, err error) {
 	slog.Warn(msg, "error", err)
 	p.mu.Lock()
-	p.errMsg = err.Error()
+	p.errMsg = publicMessage(err)
 	p.failed = true
 	p.mu.Unlock()
+}
+
+// publicMessage is the error text the page may show. The raw error goes to
+// the log for the operator; this string reaches every viewer's browser, so it
+// names the situation without naming the RCON address or other internals.
+func publicMessage(err error) string {
+	var timeout *rcon.TimeoutError
+	switch {
+	case errors.As(err, &timeout):
+		return "the game server did not respond"
+	case errors.Is(err, rcon.ErrTruncated):
+		return "received a partial response from the game server"
+	case errors.Is(err, rcon.ErrAuthFailed):
+		return "RCON authentication failed; check the configured password"
+	default:
+		return "cannot reach the game server"
+	}
 }
 
 func (p *Poller) setError(msg string) {

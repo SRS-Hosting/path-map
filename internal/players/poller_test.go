@@ -254,12 +254,17 @@ func TestPollerServesStaleOnFailure(t *testing.T) {
 		_, _, errMsg := p.Observe()
 		return errMsg != ""
 	})
-	snap, _, _ := p.Observe()
+	snap, _, errMsg := p.Observe()
 	if snap == nil || !snap.GeneratedAt.Equal(healthy.GeneratedAt) {
 		t.Fatalf("stale snapshot was not preserved: %+v", snap)
 	}
 	if len(snap.Players) != 1 {
 		t.Errorf("stale snapshot lost its players")
+	}
+	// The error message reaches every viewer's browser; the RCON address is
+	// the operator's business and must stay in the logs.
+	if strings.Contains(errMsg, client.Addr()) {
+		t.Errorf("errMsg %q leaks the RCON address", errMsg)
 	}
 }
 

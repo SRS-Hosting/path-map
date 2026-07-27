@@ -260,8 +260,10 @@ func TestRoutes(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(body, "Player Map") {
 		t.Fatalf("index: %d", rec.Code)
 	}
-	if !strings.Contains(body, rs.Addr()) {
-		t.Fatal("page does not name the target server")
+	// The page is viewer-facing: where the game server lives is the
+	// operator's business, and neither the address nor its parts may appear.
+	if strings.Contains(body, rs.Addr()) {
+		t.Fatal("page leaks the RCON address")
 	}
 	// html/template pads values injected into a script context with spaces.
 	if !strings.Contains(body, "INTERVAL_MS =  1  * 1000") {
@@ -410,6 +412,11 @@ func TestPlayersStaleAfterFailure(t *testing.T) {
 	}
 	if got.GeneratedAt == nil || !got.GeneratedAt.Equal(*healthy.GeneratedAt) {
 		t.Errorf("generatedAt changed during the outage: %v vs %v", got.GeneratedAt, healthy.GeneratedAt)
+	}
+	// The error is shown to every viewer; the RCON address is not theirs to
+	// see.
+	if strings.Contains(got.Error, rs.Addr()) {
+		t.Errorf("payload error %q leaks the RCON address", got.Error)
 	}
 }
 
