@@ -259,7 +259,10 @@
 
   /* --- view: pan and zoom -------------------------------------------- */
 
-  var view = { scale: 1, tx: 0, ty: 0, min: 0.05, max: 16 };
+  var view = { scale: 1, tx: 0, ty: 0, min: 0.05, max: 16, fitScale: 0 };
+  // The viewport size the current transform was laid out for, so a resize
+  // can keep the same world point centred.
+  var viewW = 0, viewH = 0;
 
   function apply() {
     world.style.transform = "translate(" + view.tx + "px, " + view.ty + "px) scale(" + view.scale + ")";
@@ -274,11 +277,38 @@
     var scale = Math.min(vw / iw, vh / ih);
     view.min = scale * 0.5;
     view.max = scale * 32;
+    view.fitScale = scale;
     view.scale = scale;
     view.tx = (vw - iw * scale) / 2;
     view.ty = (vh - ih * scale) / 2;
+    viewW = vw;
+    viewH = vh;
     apply();
   }
+
+  window.addEventListener("resize", function () {
+    var iw = img.naturalWidth, ih = img.naturalHeight;
+    if (!iw || !ih || !viewW || !viewH) { return; }
+    // A view still at fit scale follows the window; a zoomed view keeps its
+    // centre and only has its scale bounds recomputed for the new size.
+    if (Math.abs(view.scale - view.fitScale) < 1e-9) {
+      fit();
+      return;
+    }
+    var cx = (viewW / 2 - view.tx) / view.scale;
+    var cy = (viewH / 2 - view.ty) / view.scale;
+    var vw = viewport.clientWidth, vh = viewport.clientHeight;
+    var fitScale = Math.min(vw / iw, vh / ih);
+    view.min = fitScale * 0.5;
+    view.max = fitScale * 32;
+    view.fitScale = fitScale;
+    view.scale = Math.min(view.max, Math.max(view.min, view.scale));
+    view.tx = vw / 2 - cx * view.scale;
+    view.ty = vh / 2 - cy * view.scale;
+    viewW = vw;
+    viewH = vh;
+    apply();
+  });
 
   function zoomAt(mx, my, factor) {
     var next = Math.min(view.max, Math.max(view.min, view.scale * factor));
