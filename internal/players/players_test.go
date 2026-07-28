@@ -5,9 +5,13 @@ import (
 	"testing"
 )
 
-// goldenRecord is the one player record shape verified against a live server;
-// every parser test builds on it.
+// goldenRecord is the record shape the single-player PlayerInfo command
+// emits, echo included, verified against a live server.
 const goldenRecord = "(PlayerInfo kittykat95): Name: kittykat95 / AGID: 746-132-258 / Dinosaur: Hatzegopteryx / Role: None / Marks: 2715 / Growth: 1 / Location: (X=-67904.590 Y=-237666.790 Z=-297.420)"
+
+// goldenBare is the same record as PlayerInfoAll emits it: no per-record
+// echo, just the fields, one record per line.
+const goldenBare = "Name: kittykat95 / AGID: 746-132-258 / Dinosaur: Hatzegopteryx / Role: None / Marks: 2715 / Growth: 1 / Location: (X=-67904.590 Y=-237666.790 Z=-297.420)"
 
 func assertGolden(t *testing.T, p Player) {
 	t.Helper()
@@ -76,6 +80,41 @@ func TestParseRecordSeparators(t *testing.T) {
 				t.Errorf("second player = %+v", s.Players[1])
 			}
 		})
+	}
+}
+
+// TestParseBareRecords is the verified PlayerInfoAll layout: the command
+// echoed once with the Total on the same line, then one bare record per
+// line with no per-record echo. This is the shape a live populated server
+// actually produces — the layout the original "(PlayerInfo "-only splitter
+// silently found zero records in.
+func TestParseBareRecords(t *testing.T) {
+	raw := "(PlayerInfoAll): Total Players: 2. \n" +
+		goldenBare + "\n" +
+		"Name: rex / AGID: 111-222-333 / Dinosaur: Tyrannosaurus / Role: Moderator / Marks: 10 / Growth: 0.75 / Location: (X=1000.0 Y=-2000.0 Z=30.0)\n"
+	s := Parse(raw)
+	if len(s.Players) != 2 {
+		t.Fatalf("parsed %d players, want 2", len(s.Players))
+	}
+	if !s.Complete || s.Total != 2 {
+		t.Errorf("complete = %v, total = %d", s.Complete, s.Total)
+	}
+	assertGolden(t, s.Players[0])
+	if s.Players[1].Name != "rex" || s.Players[1].Role != "Moderator" || !s.Players[1].HasPosition {
+		t.Errorf("second player = %+v", s.Players[1])
+	}
+}
+
+// TestParseBareRecordTornAcrossSeam is the bare layout with a page seam
+// landing mid-record: reassembly is byte-exact, so the parser sees the
+// game's own line structure and the record survives whole.
+func TestParseBareRecordTornAcrossSeam(t *testing.T) {
+	// As reassembled from two pages split inside "Location".
+	raw := "(PlayerInfoAll): Total Players: 1. \n" +
+		"Name: rex / AGID: 111-222-333 / Dinosaur: Tyrannosaurus / Role: None / Marks: 10 / Growth: 0.75 / Location: (X=1000.0 Y=-2000.0 Z=30.0)\n"
+	s := Parse(raw)
+	if len(s.Players) != 1 || !s.Players[0].HasPosition {
+		t.Fatalf("players = %+v", s.Players)
 	}
 }
 

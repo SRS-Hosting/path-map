@@ -55,18 +55,22 @@ type MapInfo struct {
 	ImageFile string `json:"-"`
 }
 
-// The verified record shape, from a live server:
+// The verified record shapes, from a live server. Single-player PlayerInfo
+// echoes the command per record:
 //
 //	(PlayerInfo kittykat95): Name: kittykat95 / AGID: 746-132-258 / Dinosaur: Hatzegopteryx / Role: None / Marks: 2715 / Growth: 1 / Location: (X=-67904.590 Y=-237666.790 Z=-297.420)
 //
-// Only the single-player form is verified; how PlayerInfoAll separates
-// records is not. Records are therefore located by their "(PlayerInfo "
-// prefix rather than by line structure, which parses newline-separated,
-// glued, and page-seam-torn layouts identically.
+// PlayerInfoAll echoes once — "(PlayerInfoAll): Total Players: N. " on the
+// first line — and then emits each record bare, starting at "Name: " on its
+// own line. The "(PlayerInfo name):" prefix was always the command echo, not
+// part of the record, which is why matching it alone found nothing in
+// PlayerInfoAll output. Records are located by either opener; byte-exact
+// page reassembly preserves the game's line structure, so a record torn
+// across a page seam still starts where the game started it.
 //
 //nolint:gochecknoglobals // compiled once; the patterns are protocol constants
 var (
-	recordStartRE = regexp.MustCompile(`\(PlayerInfo `)
+	recordStartRE = regexp.MustCompile(`(?m)\(PlayerInfo |^Name: `)
 	recordEchoRE  = regexp.MustCompile(`^\(PlayerInfo (.+?)\): ?`)
 	totalRE       = regexp.MustCompile(`Total Players:\s*(\d+)`)
 	// The location is searched for by its coordinate shape anywhere in the

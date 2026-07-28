@@ -20,14 +20,15 @@ import (
 
 const waitDeadline = 5 * time.Second
 
-// The canned PlayerInfoAll spans three pages under one key — the series-wide
-// key the game actually uses — tearing one record's "Location" label across
-// the 1/2 seam and rex's species across the 2/3 seam. A server test that sees
-// both players whole has exercised pagination reassembly, the tolerant
-// parser, and the projection end to end.
+// The canned PlayerInfoAll uses the verified live layout — the command
+// echoed once with the Total on the same line, then one bare record per
+// line — spanning three pages under one series-wide key, tearing
+// kittykat95's "Location" label across the 1/2 seam and rex's species across
+// the 2/3 seam. A server test that sees both players whole has exercised
+// pagination reassembly, the tolerant parser, and the projection end to end.
 const (
-	playersPage1 = "[Page(Key 7) 1/3]Total Players: 2.\n(PlayerInfo kittykat95): Name: kittykat95 / AGID: 746-132-258 / Dinosaur: Hatzegopteryx / Role: None / Marks: 2715 / Growth: 1 / Loc"
-	playersPage2 = "[Page(Key 7) 2/3]ation: (X=-67904.590 Y=-237666.790 Z=-297.420)\n(PlayerInfo rex): Name: rex / AGID: 111-222-333 / Dinosaur: Tyrannosau"
+	playersPage1 = "[Page(Key 7) 1/3](PlayerInfoAll): Total Players: 2. \nName: kittykat95 / AGID: 746-132-258 / Dinosaur: Hatzegopteryx / Role: None / Marks: 2715 / Growth: 1 / Loc"
+	playersPage2 = "[Page(Key 7) 2/3]ation: (X=-67904.590 Y=-237666.790 Z=-297.420)\nName: rex / AGID: 111-222-333 / Dinosaur: Tyrannosau"
 	playersPage3 = "[Page(Key 7) 3/3]rus / Role: None / Marks: 10 / Growth: 0.75 / Location: (X=0.0 Y=0.0 Z=12.0)"
 )
 

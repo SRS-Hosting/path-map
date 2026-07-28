@@ -31,7 +31,7 @@ const gondwaPOIBody = "(ListPOI): Impact Crater, Grand Plains, Titan's Pass, Sna
 
 const panjuraPOIBody = "(ListPOI): Grassland Crater, Arc Mountain, The Mire, Blackwater Bayou, Tyrants Gorge, Star Ravine"
 
-const playerBody = "Total Players: 1.\n" + goldenRecord
+const playerBody = "(PlayerInfoAll): Total Players: 1. \n" + goldenBare
 
 // fakeGame is a scriptable RCON server: canned response bodies, an optional
 // down mode, and a command log. The mutex is not optional: rcontest serves
@@ -274,7 +274,7 @@ func TestPollerServesStaleOnFailure(t *testing.T) {
 // visibly incomplete — rather than freeze the map on an older snapshot.
 func TestPollerPublishesPartialResponse(t *testing.T) {
 	fg, client := newFakeGame(t)
-	fg.set(commandPlayerInfoAll, "[Page(Key 7) 1/2]Total Players: 2.\n"+goldenRecord)
+	fg.set(commandPlayerInfoAll, "[Page(Key 7) 1/2](PlayerInfoAll): Total Players: 2. \n"+goldenBare)
 	// page:7-2 falls through to the unknown-command reply, which carries no
 	// page header — exactly what a dead key looks like. Auto mode, so the
 	// no-re-detection assertion below has teeth.
