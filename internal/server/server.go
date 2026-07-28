@@ -413,11 +413,16 @@ type playersResponse struct {
 	// this field.
 	Map *players.MapInfo `json:"map"`
 	// GeneratedAt is null before the first successful poll.
-	GeneratedAt *time.Time       `json:"generatedAt"`
-	Total       int              `json:"total"`
-	Complete    bool             `json:"complete"`
-	Error       string           `json:"error,omitempty"`
-	Players     []players.Player `json:"players"`
+	GeneratedAt *time.Time `json:"generatedAt"`
+	// AgeSeconds is how old the snapshot was when this response was built,
+	// measured on the server's clock. The page schedules its fetches and
+	// ticks its "updated Ns ago" from this, so browser clock skew cannot
+	// distort either.
+	AgeSeconds *float64         `json:"ageSeconds,omitempty"`
+	Total      int              `json:"total"`
+	Complete   bool             `json:"complete"`
+	Error      string           `json:"error,omitempty"`
+	Players    []players.Player `json:"players"`
 }
 
 // handlePlayers serves the cached snapshot. Always 200: a stale or pending
@@ -434,6 +439,8 @@ func (s *Server) handlePlayers(w http.ResponseWriter, _ *http.Request) {
 	}
 	if snap != nil {
 		resp.GeneratedAt = &snap.GeneratedAt
+		age := time.Since(snap.GeneratedAt).Seconds()
+		resp.AgeSeconds = &age
 		resp.Total = snap.Total
 		resp.Complete = snap.Complete
 		resp.Players = snap.Players

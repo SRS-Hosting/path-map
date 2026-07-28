@@ -236,10 +236,20 @@
   var incomplete = document.getElementById("incomplete");
 
   var currentMap = null;
-  var lastGenerated = null; // Date of the snapshot on screen
   var lastError = "";
   var playerCount = 0;
   var markers = new Map(); // agid (or name) -> marker element
+
+  // The snapshot's age is tracked from the server-reported ageSeconds plus
+  // time since the fetch, never from generatedAt against the local clock:
+  // ages computed across two clocks inherit their skew.
+  var ageAtFetchMs = null; // null until the first successful poll arrives
+  var fetchedAtMs = 0;
+
+  function snapshotAgeMs() {
+    if (ageAtFetchMs === null) { return null; }
+    return ageAtFetchMs + (Date.now() - fetchedAtMs);
+  }
 
   function setStatus(state, text) {
     statusEl.dataset.state = state;
@@ -257,13 +267,13 @@
       setStatus("running", "detecting map…");
       return;
     }
-    if (lastGenerated === null) {
+    var age = snapshotAgeMs();
+    if (age === null) {
       setStatus("running", "waiting for first poll…");
       return;
     }
-    var age = Math.round((Date.now() - lastGenerated.getTime()) / 1000);
-    var text = playerCount + " online · updated " + age + "s ago";
-    setStatus(age * 1000 > STALE_MS ? "error" : "ok", text);
+    var text = playerCount + " online · updated " + Math.round(age / 1000) + "s ago";
+    setStatus(age > STALE_MS ? "error" : "ok", text);
   }
 
   /* --- view: pan and zoom -------------------------------------------- */
@@ -518,7 +528,8 @@
     }
 
     if (data.generatedAt) {
-      lastGenerated = new Date(data.generatedAt);
+      ageAtFetchMs = (data.ageSeconds || 0) * 1000;
+      fetchedAtMs = Date.now();
       incomplete.hidden = data.complete;
       renderPlayers(data.players);
     }
@@ -539,34 +550,48 @@
           : "could not reach the web service";
         updateStatus();
       })
-      .finally(function () { clearTimeout(timer); });
+      .finally(function () {
+        clearTimeout(timer);
+        scheduleNext();
+      });
   }
 
   /* --- lifecycle ------------------------------------------------------ */
 
   var pollTimer = null;
 
-  function startPolling() {
-    if (pollTimer === null) { pollTimer = setInterval(refresh, INTERVAL_MS); }
-  }
-  function stopPolling() {
-    if (pollTimer !== null) { clearInterval(pollTimer); pollTimer = null; }
+  // Each fetch schedules the next one just past the server poller's next
+  // tick, instead of on a fixed interval of its own. Two free-running
+  // interval clocks beat against each other: the server regenerates its
+  // snapshot right after the fetch that just missed it, and the shown age
+  // hovers between one and two intervals. Aiming at
+  // (interval − age mod interval) + slack keeps every fetch a moment behind
+  // a fresh snapshot, so the age sawtooths from ~0 like it should.
+  function scheduleNext() {
+    if (document.hidden) { return; }
+    clearTimeout(pollTimer);
+    var delay = INTERVAL_MS;
+    var age = snapshotAgeMs();
+    if (age !== null) {
+      delay = INTERVAL_MS - (age % INTERVAL_MS) + 750;
+      delay = Math.max(1000, Math.min(delay, INTERVAL_MS + 750));
+    }
+    pollTimer = setTimeout(refresh, delay);
   }
 
   // A hidden tab stops asking, which is what lets the server stop polling
   // the game: the demand signal the backend watches is this request stream.
   document.addEventListener("visibilitychange", function () {
     if (document.hidden) {
-      stopPolling();
+      clearTimeout(pollTimer);
+      pollTimer = null;
     } else {
       refresh();
-      startPolling();
     }
   });
 
   setInterval(updateStatus, 1000);
   refresh();
-  startPolling();
 })();
 </script>
 
