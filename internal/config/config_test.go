@@ -13,7 +13,7 @@ func valid() Config {
 		HTTP:     HTTP{Bind: "", Port: 8080},
 		RCON:     RCON{Host: "127.0.0.1", Port: 7779, Password: "secret", TimeoutSeconds: 5, MaxConcurrent: 4},
 		Map:      Map{Name: "gondwa", ImagePath: "gondwa.png"},
-		Poller:   Poller{IntervalSeconds: 10, IdleAfterSeconds: 30},
+		Poller:   Poller{IntervalSeconds: 10, IdleAfterSeconds: 30, Health: true, HealthPerPoll: 4},
 	}
 }
 
@@ -57,6 +57,17 @@ func TestValidateRangeChecks(t *testing.T) {
 		{"interval too high", func(c *Config) { c.Poller.IntervalSeconds = MaxPollIntervalSeconds + 1 }, "poller.intervalSeconds"},
 		{"idle below interval", func(c *Config) { c.Poller.IdleAfterSeconds = 5 }, "poller.idleAfterSeconds"},
 		{"idle too high", func(c *Config) { c.Poller.IdleAfterSeconds = MaxIdleAfterSeconds + 1 }, "poller.idleAfterSeconds"},
+		// Health is switched off with poller.health, never by budgeting zero
+		// players: a zero here is a typo that would silently drop the feature.
+		{"health budget zero", func(c *Config) { c.Poller.HealthPerPoll = 0 }, "poller.healthPerPoll"},
+		{"health budget negative", func(c *Config) { c.Poller.HealthPerPoll = -4 }, "poller.healthPerPoll"},
+		{"health budget too high", func(c *Config) { c.Poller.HealthPerPoll = MaxHealthPerPoll + 1 }, "poller.healthPerPoll"},
+		// And it is checked even when health is off, so the operator who turns
+		// health on later does not inherit a broken value.
+		{"health budget zero while off", func(c *Config) {
+			c.Poller.Health = false
+			c.Poller.HealthPerPoll = 0
+		}, "poller.healthPerPoll"},
 	}
 
 	for _, tc := range tests {
@@ -193,6 +204,24 @@ func TestPollerDurations(t *testing.T) {
 	}
 	if got := cfg.Poller.IdleAfter(); got != 30*time.Second {
 		t.Errorf("Poller.IdleAfter() = %s", got)
+	}
+}
+
+// TestHealthBudget covers the one place the toggle and the budget meet: off
+// must mean "ask nobody", because that single number is all the poller sees.
+func TestHealthBudget(t *testing.T) {
+	cfg := valid()
+	if got := cfg.Poller.HealthBudget(); got != 4 {
+		t.Errorf("HealthBudget() = %d, want the configured 4", got)
+	}
+	cfg.Poller.Health = false
+	if got := cfg.Poller.HealthBudget(); got != 0 {
+		t.Errorf("HealthBudget() = %d with health off, want 0: any other value still costs the game thread", got)
+	}
+	// The default must be on: health is the feature, and the budget is what
+	// makes it affordable.
+	if !valid().Poller.Health {
+		t.Error("the reference config has health switched off")
 	}
 }
 

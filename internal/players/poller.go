@@ -39,6 +39,15 @@ type Poller struct {
 	// wake-up is a level, not a count.
 	wake chan struct{}
 
+	// healthPerPoll bounds how many players one poll may ask health for; 0
+	// switches health off entirely. refreshHealth explains why a budget is the
+	// only shape this feature can safely take.
+	healthPerPoll int
+	// healthCache holds the last known health per player, keyed by healthKey.
+	// It needs no lock of its own: only the Run goroutine touches it, and the
+	// snapshot it decorates is published under mu like every other one.
+	healthCache map[string]healthEntry
+
 	mu         sync.Mutex
 	snap       *Snapshot // nil until the first successful poll
 	resolved   *MapInfo  // nil while the map is undetected
@@ -50,18 +59,37 @@ type Poller struct {
 	failed bool
 }
 
+// PollerOption is optional poller behaviour. Health is expressed this way
+// rather than as another positional parameter because it is genuinely optional:
+// a poller that was never asked to sample health must cost the game exactly
+// what it did before health existed.
+type PollerOption func(*Poller)
+
+// WithHealth enables health sampling for at most perPoll players per poll,
+// least recently sampled first. perPoll of zero or less leaves health off, so
+// the operator's switch and this budget are the same number and cannot
+// disagree.
+func WithHealth(perPoll int) PollerOption {
+	return func(p *Poller) { p.healthPerPoll = perPoll }
+}
+
 // NewPoller builds a Poller. fixed non-nil pins the map and disables
 // detection; otherwise lookup resolves detected map names.
-func NewPoller(client *rcon.Client, interval, idleAfter time.Duration, fixed *MapInfo, lookup func(string) (MapInfo, bool)) *Poller {
-	return &Poller{
-		client:    client,
-		interval:  interval,
-		idleAfter: idleAfter,
-		fixed:     fixed,
-		lookup:    lookup,
-		wake:      make(chan struct{}, 1),
-		resolved:  fixed,
+func NewPoller(client *rcon.Client, interval, idleAfter time.Duration, fixed *MapInfo, lookup func(string) (MapInfo, bool), opts ...PollerOption) *Poller {
+	p := &Poller{
+		client:      client,
+		interval:    interval,
+		idleAfter:   idleAfter,
+		fixed:       fixed,
+		lookup:      lookup,
+		wake:        make(chan struct{}, 1),
+		resolved:    fixed,
+		healthCache: map[string]healthEntry{},
 	}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
 }
 
 // Observe returns the cached snapshot, the resolved map, and the last error
@@ -158,7 +186,18 @@ func (p *Poller) poll(ctx context.Context) {
 				snap.Players[i].X, snap.Players[i].Y, info.HalfExtentX, info.HalfExtentY)
 		}
 	}
+	// Health is skipped when the position poll already struggled: the game is
+	// wedged or losing pages, and per-player commands would only make its next
+	// cycle worse. Health then simply ages one more interval, which it is built
+	// to do. Sampling happens before the timestamp so every reading is at most
+	// as old as the snapshot claiming to carry it, and it cannot fail its way
+	// out of publishing what the positions already proved.
+	if err == nil {
+		p.refreshHealth(ctx, snap.Players)
+	}
 	snap.GeneratedAt = time.Now()
+	p.applyHealth(snap.Players, snap.GeneratedAt)
+	p.pruneHealth(snap.Players, snap.Complete)
 
 	switch {
 	case err != nil:

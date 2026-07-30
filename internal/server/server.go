@@ -71,8 +71,8 @@ func New(cfg *config.Config) (*Server, error) {
 		info := fixedMapInfo(cfg.Map)
 		fixed = &info
 	}
-	poller := players.NewPoller(client, cfg.Poller.Interval(), cfg.Poller.IdleAfter(), fixed, lookupPreset)
-
+	poller := players.NewPoller(client, cfg.Poller.Interval(), cfg.Poller.IdleAfter(), fixed, lookupPreset,
+		players.WithHealth(cfg.Poller.HealthBudget()))
 	page, err := renderPage(cfg.Poller.IntervalSeconds, cfg.RCON.TimeoutSeconds)
 	if err != nil {
 		return nil, err

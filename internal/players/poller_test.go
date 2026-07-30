@@ -2,6 +2,7 @@ package players
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -119,6 +120,61 @@ func (fg *fakeGame) count(command string) int {
 		}
 	}
 	return n
+}
+
+// countPrefix counts by prefix, which is how the attribute commands have to be
+// counted: they name a player, so no exact match can see them.
+func (fg *fakeGame) countPrefix(prefix string) int {
+	fg.mu.Lock()
+	defer fg.mu.Unlock()
+	n := 0
+	for _, c := range fg.commands {
+		if strings.HasPrefix(c, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+// countHealth is the number the budget is about: every command spent on health,
+// cheap or paginating. "GetAllAttr" does not start with "GetAttr", so the two
+// prefixes do not double count.
+func (fg *fakeGame) countHealth() int {
+	return fg.countPrefix(commandGetAttr) + fg.countPrefix(commandGetAllAttr)
+}
+
+// rosterBody builds a PlayerInfoAll answer in the verified bare layout for the
+// named players, all at the same growth, with distinct AGIDs and positions.
+func rosterBody(growth float64, names ...string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "(PlayerInfoAll): Total Players: %d. \n", len(names))
+	for i, name := range names {
+		fmt.Fprintf(&b, "Name: %s / AGID: %d-000-000 / Dinosaur: Rex / Role: None / Marks: 10 / Growth: %v / Location: (X=%d.0 Y=0.0 Z=0.0)\n",
+			name, i+1, growth, (i+1)*1000)
+	}
+	return b.String()
+}
+
+// scriptHealth teaches the fake both attribute answers for each player: the
+// paginating one that carries MaxHealth, and the cheap one that does not.
+func (fg *fakeGame) scriptHealth(names []string, health, maxHealth float64) {
+	for _, name := range names {
+		fg.set(commandGetAllAttr+" "+name, fmt.Sprintf(
+			"(GetAllAttr %s): LocomotionState=3.000000, Health=%f, MaxHealth=%f, Growth=1.000000",
+			name, health, maxHealth))
+		// The game lower-cases the attribute name in this message.
+		fg.set(commandGetAttr+" "+name+" "+attrHealth, fmt.Sprintf(
+			"(GetAttr %s Health): Property health is %f.", name, health))
+	}
+}
+
+// scriptHealthAnswer makes every attribute command for these players answer the
+// same body: for a game that has no pawn to report, or no such command.
+func (fg *fakeGame) scriptHealthAnswer(names []string, body string) {
+	for _, name := range names {
+		fg.set(commandGetAllAttr+" "+name, body)
+		fg.set(commandGetAttr+" "+name+" "+attrHealth, body)
+	}
 }
 
 func gondwaInfo() MapInfo {
@@ -458,6 +514,351 @@ func TestPollerStopsOnCancel(t *testing.T) {
 	case <-done:
 	case <-time.After(waitDeadline):
 		t.Fatal("Run did not return after cancellation")
+	}
+}
+
+// The health tests all use the verified live reading: 96.5 hit points out of
+// 850, which is a player at 11% — not, as the raw number invites, one at 96%.
+const (
+	liveHealth    = 96.534752
+	liveMaxHealth = 850.0
+)
+
+// healthNames is a four-player roster: more than any budget these tests grant,
+// so "one cycle cannot cover everyone" is the case under test.
+func healthNames() []string { return []string{"kittykat95", "rex", "trike", "ptera"} }
+
+// newHealthGame is a fake game with a roster and both attribute answers for
+// every player in it.
+func newHealthGame(t *testing.T, growth float64) (*fakeGame, *rcon.Client) {
+	t.Helper()
+	fg, client := newFakeGame(t)
+	fg.set(commandPlayerInfoAll, rosterBody(growth, healthNames()...))
+	fg.scriptHealth(healthNames(), liveHealth, liveMaxHealth)
+	return fg, client
+}
+
+// waitForHealth waits until every player in the snapshot carries a reading.
+func waitForHealth(t *testing.T, p *Poller) *Snapshot {
+	t.Helper()
+	var snap *Snapshot
+	waitFor(t, "health for every player", func() bool {
+		snap, _, _ = p.Observe()
+		if snap == nil || len(snap.Players) != len(healthNames()) {
+			return false
+		}
+		for _, player := range snap.Players {
+			if !player.HasHealth {
+				return false
+			}
+		}
+		return true
+	})
+	return snap
+}
+
+// TestPollerHealthBudgetIsFlatInPlayerCount is the cost contract this feature
+// had to be designed around. Health only answers per player, so the obvious
+// implementation spends one command per player per poll — the linear
+// game-thread tax the whole application exists to avoid. Instead the spend per
+// poll is capped, and every player still gets a reading, just a cycle or two
+// later.
+func TestPollerHealthBudgetIsFlatInPlayerCount(t *testing.T) {
+	const budget = 2
+	fg, client := newHealthGame(t, 1)
+	fixed := gondwaInfo()
+	p := NewPoller(client, testInterval, testIdleAfter, &fixed, nil, WithHealth(budget))
+	startPoller(t, p)
+
+	p.Observe()
+	snap := waitForHealth(t, p)
+
+	// Health is read before the poll count, so the poll count can only ever
+	// over-count the cycles those commands came from — never under-count them
+	// and turn a passing budget into a failure.
+	health := fg.countHealth()
+	polls := fg.count(commandPlayerInfoAll)
+	if polls == 0 {
+		t.Fatal("no polls were issued at all")
+	}
+	if health > budget*polls {
+		t.Errorf("%d health commands across %d polls exceeds the budget of %d per poll",
+			health, polls, budget)
+	}
+	if health >= len(healthNames())*polls {
+		t.Errorf("%d health commands across %d polls for %d players: the cost is scaling with the roster",
+			health, polls, len(healthNames()))
+	}
+
+	// Every player has a reading even though no single cycle could have asked
+	// them all: that is the cache doing its job between samples.
+	for _, player := range snap.Players {
+		if player.Health != liveHealth || player.MaxHealth != liveMaxHealth {
+			t.Errorf("%s health = %v/%v", player.Name, player.Health, player.MaxHealth)
+		}
+		if player.HealthPercent < 11 || player.HealthPercent > 12 {
+			t.Errorf("%s is at %v%%, want ~11.4: Health is absolute hit points and must be "+
+				"divided by MaxHealth, or a dying player renders as a healthy one",
+				player.Name, player.HealthPercent)
+		}
+		if !player.HasPosition {
+			t.Errorf("%s lost its position to the health step", player.Name)
+		}
+	}
+}
+
+// TestPollerHealthCachesMaxHealth pins the steady state: the paginating
+// GetAllAttr is spent once per player, and only again when growth — the one
+// thing that moves a maximum — has actually moved.
+func TestPollerHealthCachesMaxHealth(t *testing.T) {
+	fg, client := newHealthGame(t, 0.5)
+	fixed := gondwaInfo()
+	p := NewPoller(client, testInterval, testIdleAfter, &fixed, nil, WithHealth(len(healthNames())))
+	startPoller(t, p)
+
+	p.Observe()
+	waitForHealth(t, p)
+
+	// Several more cycles, all of which must go the cheap way.
+	polls := fg.count(commandPlayerInfoAll)
+	waitFor(t, "three further polls", func() bool {
+		p.Observe()
+		return fg.count(commandPlayerInfoAll) >= polls+3
+	})
+
+	if n := fg.countPrefix(commandGetAllAttr); n != len(healthNames()) {
+		t.Errorf("GetAllAttr ran %d times for %d players; MaxHealth is nearly static and must be "+
+			"cached, not re-read every cycle", n, len(healthNames()))
+	}
+	if n := fg.countPrefix(commandGetAttr); n < len(healthNames()) {
+		t.Errorf("only %d cheap refreshes; the warm path is not being used", n)
+	}
+
+	// Growing changes the maximum, which is the one thing that must invalidate
+	// it. Everything else about the player is unchanged.
+	fg.set(commandPlayerInfoAll, rosterBody(1, healthNames()...))
+	waitFor(t, "MaxHealth to be re-read after growth", func() bool {
+		p.Observe()
+		return fg.countPrefix(commandGetAllAttr) > len(healthNames())
+	})
+}
+
+// TestPollerHealthIsSilentWhileIdle is the rule health must obey exactly as
+// positions do: a map nobody is looking at costs the game nothing at all.
+func TestPollerHealthIsSilentWhileIdle(t *testing.T) {
+	fg, client := newHealthGame(t, 1)
+	fixed := gondwaInfo()
+	p := NewPoller(client, testInterval, testIdleAfter, &fixed, nil, WithHealth(4))
+	startPoller(t, p)
+
+	// Nobody has asked yet, so not one attribute command may go out.
+	time.Sleep(4 * testInterval)
+	if n := fg.countHealth(); n != 0 {
+		t.Fatalf("%d health commands before any viewer arrived", n)
+	}
+
+	p.Observe()
+	waitForHealth(t, p)
+
+	waitFor(t, "polling to go idle", func() bool {
+		before := fg.count(commandPlayerInfoAll)
+		time.Sleep(3 * testInterval)
+		return fg.count(commandPlayerInfoAll) == before
+	})
+	// And once the viewers are gone, health goes quiet with the positions.
+	before := fg.countHealth()
+	time.Sleep(3 * testInterval)
+	if after := fg.countHealth(); after != before {
+		t.Errorf("health sampling continued while idle: %d -> %d", before, after)
+	}
+}
+
+// TestPollerHealthNoPawn covers a player sitting in the menus or dead and not
+// yet respawned. The game answers "No Player Pawn." — a normal state that must
+// read as no health, leave the rest of the snapshot alone, and never surface as
+// an error on the page.
+func TestPollerHealthNoPawn(t *testing.T) {
+	fg, client := newHealthGame(t, 1)
+	fg.scriptHealthAnswer(healthNames(), "No Player Pawn.")
+	fixed := gondwaInfo()
+	p := NewPoller(client, testInterval, testIdleAfter, &fixed, nil, WithHealth(len(healthNames())))
+	startPoller(t, p)
+
+	p.Observe()
+	waitFor(t, "a snapshot after a full sampling round", func() bool {
+		snap, _, _ := p.Observe()
+		return snap != nil && fg.countHealth() >= len(healthNames())
+	})
+
+	snap, _, errMsg := p.Observe()
+	if errMsg != "" {
+		t.Errorf("errMsg = %q; an unspawned player is not a failure", errMsg)
+	}
+	if len(snap.Players) != len(healthNames()) || !snap.Complete {
+		t.Fatalf("snapshot = %+v", snap)
+	}
+	for _, player := range snap.Players {
+		if player.HasHealth || player.HealthPercent != 0 {
+			t.Errorf("%s = %+v, want unknown health", player.Name, player)
+		}
+		if !player.HasPosition || player.U == 0 {
+			t.Errorf("%s lost its position: %+v", player.Name, player)
+		}
+	}
+}
+
+// TestPollerHealthUnavailableLeavesPositionsIntact is the degradation promise:
+// on a build that has never heard of these commands, the map works exactly as
+// it did before health existed.
+func TestPollerHealthUnavailableLeavesPositionsIntact(t *testing.T) {
+	fg, client := newHealthGame(t, 1)
+	// The fake answers unknown commands the way the game does.
+	fg.scriptHealthAnswer(healthNames(), "That command does not exist")
+	fixed := gondwaInfo()
+	p := NewPoller(client, testInterval, testIdleAfter, &fixed, nil, WithHealth(len(healthNames())))
+	startPoller(t, p)
+
+	p.Observe()
+	waitFor(t, "a snapshot after a full sampling round", func() bool {
+		snap, _, _ := p.Observe()
+		return snap != nil && fg.countHealth() >= len(healthNames())
+	})
+
+	snap, info, errMsg := p.Observe()
+	if errMsg != "" {
+		t.Errorf("errMsg = %q; a health failure must not label the map", errMsg)
+	}
+	if info == nil || !snap.Complete || len(snap.Players) != len(healthNames()) {
+		t.Fatalf("snapshot = %+v, map = %+v", snap, info)
+	}
+	for _, player := range snap.Players {
+		if player.HasHealth {
+			t.Errorf("%s claims health the game never reported: %+v", player.Name, player)
+		}
+		if !player.HasPosition || player.V != 0.5 {
+			t.Errorf("%s = %+v, want an intact projected position", player.Name, player)
+		}
+	}
+}
+
+// TestPollerHealthFailureDoesNotStarveTheRotation covers the failure the budget
+// could otherwise turn into a permanent blackout: a player the client will not
+// even send a command about. The cycle stops early on purpose — a failure is
+// usually the server itself, and spending the rest of the budget on timeouts
+// would only delay the next position poll — but the player who failed must still
+// lose its place at the front of the queue, or everyone behind it would never be
+// sampled again.
+func TestPollerHealthFailureDoesNotStarveTheRotation(t *testing.T) {
+	// A name this long makes the command longer than the protocol allows, so the
+	// client refuses it without dialling: an RCON-level failure with no timeout
+	// to wait out.
+	unaskable := strings.Repeat("x", rcon.MaxCommandLen)
+	fg, client := newFakeGame(t)
+	fg.set(commandPlayerInfoAll, rosterBody(1, append([]string{unaskable}, healthNames()...)...))
+	fg.scriptHealth(healthNames(), liveHealth, liveMaxHealth)
+
+	fixed := gondwaInfo()
+	p := NewPoller(client, testInterval, testIdleAfter, &fixed, nil, WithHealth(len(healthNames())))
+	startPoller(t, p)
+
+	p.Observe()
+	var snap *Snapshot
+	waitFor(t, "health for everyone the client will ask about", func() bool {
+		snap, _, _ = p.Observe()
+		if snap == nil || len(snap.Players) != len(healthNames())+1 {
+			return false
+		}
+		for _, player := range snap.Players {
+			if player.Name != unaskable && !player.HasHealth {
+				return false
+			}
+		}
+		return true
+	})
+
+	_, _, errMsg := p.Observe()
+	if errMsg != "" {
+		t.Errorf("errMsg = %q; a health failure must not label the map", errMsg)
+	}
+	for _, player := range snap.Players {
+		if !player.HasPosition {
+			t.Errorf("%.8s lost its position to a health failure", player.Name)
+		}
+	}
+	if snap.Players[0].HasHealth {
+		t.Error("the unaskable player reports health nobody could have read")
+	}
+}
+
+// TestPollerHealthOffCostsNothing is the operator's escape hatch: with health
+// switched off, not one attribute command is issued, ever.
+func TestPollerHealthOffCostsNothing(t *testing.T) {
+	for name, opts := range map[string][]PollerOption{
+		"never asked for": nil,
+		"explicitly zero": {WithHealth(0)},
+		"nonsense budget": {WithHealth(-1)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fg, client := newHealthGame(t, 1)
+			fixed := gondwaInfo()
+			p := NewPoller(client, testInterval, testIdleAfter, &fixed, nil, opts...)
+			startPoller(t, p)
+
+			p.Observe()
+			waitFor(t, "three polls", func() bool {
+				p.Observe()
+				return fg.count(commandPlayerInfoAll) >= 3
+			})
+
+			if n := fg.countHealth(); n != 0 {
+				t.Errorf("%d health commands with health switched off", n)
+			}
+			snap, _, _ := p.Observe()
+			for _, player := range snap.Players {
+				if player.HasHealth {
+					t.Errorf("%s carries health nobody asked for", player.Name)
+				}
+				if !player.HasPosition {
+					t.Errorf("%s lost its position: %+v", player.Name, player)
+				}
+			}
+		})
+	}
+}
+
+// TestPollerHealthNotSampledDuringAnOutage covers the other half of failure
+// containment: when the position poll itself fails, health must not go hunting
+// for players on a server that just proved it cannot answer, and the last good
+// snapshot keeps the readings it already had.
+func TestPollerHealthNotSampledDuringAnOutage(t *testing.T) {
+	fg, client := newHealthGame(t, 1)
+	fixed := gondwaInfo()
+	p := NewPoller(client, testInterval, testIdleAfter, &fixed, nil, WithHealth(len(healthNames())))
+	startPoller(t, p)
+
+	p.Observe()
+	healthy := waitForHealth(t, p)
+
+	fg.setDown(true)
+	waitFor(t, "the outage to surface", func() bool {
+		_, _, errMsg := p.Observe()
+		return errMsg != ""
+	})
+	// A failed connection still logs no command at the fake, so this counts
+	// attempts the poller decided to make: after the outage is known, it must
+	// make none.
+	before := fg.countHealth()
+	time.Sleep(3 * testInterval)
+	if after := fg.countHealth(); after != before {
+		t.Errorf("health kept probing a server that is down: %d -> %d", before, after)
+	}
+
+	snap, _, _ := p.Observe()
+	if snap == nil || !snap.GeneratedAt.Equal(healthy.GeneratedAt) {
+		t.Fatalf("stale snapshot was not preserved: %+v", snap)
+	}
+	if !snap.Players[0].HasHealth || snap.Players[0].HealthPercent < 11 {
+		t.Errorf("the outage cost the stale snapshot its health: %+v", snap.Players[0])
 	}
 }
 

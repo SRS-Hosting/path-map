@@ -106,10 +106,25 @@
     height: 10px;
     transform: translate(-50%, -50%) scale(var(--inv));
     border-radius: 50%;
-    background: var(--accent);
+    /* The fill level is the health percentage: two gradient stops at the same
+       position make a hard waterline, so a plain div reads as a gauge with no
+       image, no canvas, and nothing to load. It fills the disc inside the
+       separation ring — the same disc that used to be solid blue, so a
+       full-health server still looks exactly like this map always has, and an
+       empty one shows the map through the hole. --hp is set per marker by the
+       script, and the fallback colour keeps a marker legible even if it never
+       gets a band. */
+    --hp: 0%;
+    background: linear-gradient(to top,
+      var(--hp-color, var(--dim)) var(--hp), transparent var(--hp));
     border: 2px solid var(--bg);
-    box-shadow: 0 0 0 1px var(--accent);
+    box-shadow: 0 0 0 1px var(--hp-color, var(--dim));
   }
+
+  /* Unknown health fills solid grey instead of showing an empty ring: an empty
+     ring is what 0% looks like, and "not sampled yet" must not read as "about
+     to die". */
+  .marker[data-hp="unknown"] { --hp: 100%; }
 
   .marker .label {
     position: absolute;
@@ -173,6 +188,11 @@
   #roster li:hover { background: var(--bg); }
   #roster li .meta { color: var(--dim); font-size: 12px; }
   #roster li.nopos { cursor: default; color: var(--dim); }
+
+  #roster li .hp {
+    color: var(--hp-color, var(--dim));
+    font-size: 12px;
+  }
 
   #roster li .agid {
     width: fit-content;
@@ -456,27 +476,75 @@
     }, 1200);
   }
 
+  // Health arrives as absolute hit points plus a percentage the server already
+  // computed. Only healthPercent may be coloured or sized by: the server
+  // reports 96.5 health against a maximum of 850, so the raw number belongs to
+  // a player at 11%, and treating it as a percentage would paint them green.
+  //
+  // hasHealth false covers three cases that all mean the same thing to a
+  // viewer — not sampled yet, no pawn, sampling switched off — and none of them
+  // may render as 0%, which is what a dying player looks like.
+  function healthBand(p) {
+    if (!p.hasHealth) { return "unknown"; }
+    if (p.healthPercent >= 100) { return "full"; }
+    if (p.healthPercent >= 66) { return "high"; }
+    if (p.healthPercent >= 33) { return "mid"; }
+    return "low";
+  }
+
+  function healthText(p) {
+    if (!p.hasHealth) { return "hp unknown"; }
+    return Math.round(p.healthPercent) + "% hp · " +
+      Math.round(p.health) + "/" + Math.round(p.maxHealth);
+  }
+
+  // Marks reach seven figures on a long-lived server and the roster is a 240px
+  // column, so large values are abbreviated rather than left to wrap over the
+  // row below. Small ones keep their exact digits, grouped by the browser's own
+  // locale.
+  function formatMarks(n) {
+    if (typeof n !== "number" || !isFinite(n)) { return "0"; }
+    if (Math.abs(n) < 1e4) { return n.toLocaleString(); }
+    var thousands = Math.round(n / 1e3);
+    // Rounding can carry 999,999 up to a thousand thousand; promote it rather
+    // than printing "1000k".
+    if (Math.abs(thousands) >= 1e3) { return (thousands / 1e3).toFixed(1) + "M"; }
+    return thousands + "k";
+  }
+
   function renderPlayers(list) {
     playerCount = list.length;
 
     var seen = new Set();
+    playerByKey.clear();
     list.forEach(function (p) {
       var key = p.agid || p.name;
       if (!p.hasPosition) { return; }
       seen.add(key);
+      playerByKey.set(key, p);
       var m = markers.get(key);
       if (!m) {
         m = document.createElement("div");
         m.className = "marker";
+        m.dataset.key = key;
         var label = document.createElement("span");
         label.className = "label";
         m.appendChild(label);
         markersEl.appendChild(m);
         markers.set(key, m);
       }
-      // Clamped for display only; the data keeps its out-of-bounds truth.
-      m.style.left = (clamp01(p.u) * 100) + "%";
-      m.style.top = (clamp01(p.v) * 100) + "%";
+      // Health is independent of position, so it refreshes even while a marker
+      // is held: an admin dragging someone should still see them bleeding.
+      // The band picks the colour; --hp is the waterline. It is left unset for
+      // unknown health so the stylesheet's solid-grey rule can win — an inline
+      // 0% would beat it and show the empty circle that means "dying".
+      m.dataset.hp = healthBand(p);
+      if (p.hasHealth) {
+        m.style.setProperty("--hp", Math.round(clamp01(p.healthPercent / 100) * 1000) / 10 + "%");
+      } else {
+        m.style.removeProperty("--hp");
+      }
+      m.title = p.name + " · " + healthText(p);
       m.firstChild.textContent = p.name;
     });
     markers.forEach(function (m, key) {
@@ -493,9 +561,23 @@
         var meta = document.createElement("span");
         meta.className = "meta";
         meta.textContent = p.dinosaur +
-          (p.growth > 0 ? " · " + Math.round(p.growth * 100) + "% grown" : "");
+          (p.growth > 0 ? " · " + Math.round(p.growth * 100) + "% grown" : "") +
+          " · " + formatMarks(p.marks) + " marks";
+        // The abbreviated figure loses digits, so the exact one stays reachable
+        // without spending a line on it.
+        if (p.marks >= 1e4) { meta.title = p.marks.toLocaleString() + " marks"; }
+        var hp = document.createElement("span");
+        hp.className = "hp";
+        hp.dataset.hp = healthBand(p);
+        hp.textContent = healthText(p);
+        // Health refreshes a few players per poll, so its age is not the
+        // snapshot's age and is worth saying out loud.
+        if (p.hasHealth) {
+          hp.title = "sampled " + Math.round(p.healthAgeSeconds || 0) + "s ago";
+        }
         row.appendChild(name);
         row.appendChild(meta);
+        row.appendChild(hp);
         if (p.agid) {
           var agid = document.createElement("span");
           agid.className = "agid";

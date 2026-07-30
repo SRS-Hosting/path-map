@@ -34,6 +34,12 @@ const (
 
 const gondwaPOIBody = "(ListPOI): Impact Crater, Grand Plains, Titan's Pass, Snake Gully, Savanna Grassland, Salt Flats, Burned Forest, Red Island"
 
+// kittyAttrs is the verified GetAllAttr shape, trimmed. The numbers are the
+// live ones: 96.5 hit points of 850 is a player at 11%, and the API must carry
+// that percentage rather than leave the page to mistake 96.5 for one.
+const kittyAttrs = "(GetAllAttr kittykat95): LocomotionState=3.000000, Health=96.534752, " +
+	"MaxHealth=850.000000, HealthRecoveryRate=1.900000, Growth=1.000000"
+
 // fakeGame fakes the paginated game server. down makes new connections fail
 // authentication, which is how an outage is simulated: the client dials fresh
 // per command, so refusing auth is indistinguishable from a crashed server
@@ -95,6 +101,12 @@ func (fg *fakeGame) respond(command string) string {
 		return playersPage3
 	case "ListPOI":
 		return gondwaPOIBody
+	case "GetAllAttr kittykat95":
+		return kittyAttrs
+	case "GetAllAttr rex":
+		// Unspawned: a normal state that must reach the page as unknown health
+		// rather than as 0%, which would draw him as an emergency.
+		return "(GetAllAttr rex): No Player Pawn."
 	default:
 		return "That command does not exist"
 	}
@@ -158,7 +170,7 @@ func testConfig(t *testing.T, rconAddr string) *config.Config {
 		HTTP:     config.HTTP{Bind: "127.0.0.1", Port: 8080},
 		RCON:     config.RCON{Host: host, Port: port, Password: "pw", TimeoutSeconds: 5, MaxConcurrent: 4},
 		Map:      config.Map{Name: "gondwa", ImagePath: writeTestImage(t)},
-		Poller:   config.Poller{IntervalSeconds: 1, IdleAfterSeconds: 2},
+		Poller:   config.Poller{IntervalSeconds: 1, IdleAfterSeconds: 2, Health: true, HealthPerPoll: 4},
 	}
 }
 
@@ -387,6 +399,50 @@ func TestPlayersEndToEnd(t *testing.T) {
 	}
 	if rex.U != 0.5 || rex.V != 0.5 {
 		t.Errorf("rex projected to (%v, %v), want the exact centre", rex.U, rex.V)
+	}
+}
+
+// TestPlayersHealthFlowsThrough pins the API shape the page reads. Health is
+// serialised straight out of players.Player, so the field names, the computed
+// percentage, and the unknown case are all asserted here rather than assumed.
+func TestPlayersHealthFlowsThrough(t *testing.T) {
+	_, rs := newTestRCON(t)
+	s := newTestServer(t, testConfig(t, rs.Addr()))
+	startPoller(t, s)
+
+	var got playersResponse
+	waitFor(t, "a snapshot carrying health", func() bool {
+		_, got = getPlayers(t, s)
+		return len(got.Players) == 2 && got.Players[0].HasHealth
+	})
+
+	kitty := got.Players[0]
+	if kitty.Health != 96.534752 || kitty.MaxHealth != 850 {
+		t.Errorf("kittykat95 health = %v/%v, want the reported hit points", kitty.Health, kitty.MaxHealth)
+	}
+	if kitty.HealthPercent < 11 || kitty.HealthPercent > 12 {
+		t.Errorf("kittykat95 is at %v%%, want ~11.4: Health is absolute hit points, and serving "+
+			"96.5 as a percentage would paint a dying player healthy", kitty.HealthPercent)
+	}
+	if !kitty.HasPosition || kitty.U < 0.41 || kitty.U > 0.42 {
+		t.Errorf("kittykat95 = %+v, want her position untouched by the health step", kitty)
+	}
+
+	// rex has no pawn. Unknown health must serialise as unknown, not as a zero
+	// the page would draw in red.
+	rex := got.Players[1]
+	if rex.HasHealth || rex.HealthPercent != 0 || rex.Health != 0 {
+		t.Errorf("rex = %+v, want unknown health for a player with no pawn", rex)
+	}
+	if got.Error != "" {
+		t.Errorf("error = %q; an unspawned player is not a failure", got.Error)
+	}
+
+	raw := getRec(t, s, "/api/players").Body.String()
+	for _, field := range []string{`"health":`, `"maxHealth":`, `"healthPercent":`, `"hasHealth":`} {
+		if !strings.Contains(raw, field) {
+			t.Errorf("payload is missing %s, which the page reads by name: %s", field, raw)
+		}
 	}
 }
 

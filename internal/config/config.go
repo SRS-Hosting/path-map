@@ -200,6 +200,12 @@ const MaxPollIntervalSeconds = 3600
 // MaxIdleAfterSeconds bounds poller.idleAfterSeconds the same way.
 const MaxIdleAfterSeconds = 86400
 
+// MaxHealthPerPoll bounds poller.healthPerPoll. Health answers for one player
+// per command, so this is the ceiling on how much game-thread time a single
+// poll may spend on it; a value anywhere near this is already the per-player
+// scrape the budget exists to prevent.
+const MaxHealthPerPoll = 32
+
 // Poller controls how often the map asks the game for player positions. RCON
 // commands execute on the game thread, so this cadence is a direct tax on the
 // server's tick budget; polling stops entirely while nobody is watching.
@@ -211,6 +217,27 @@ type Poller struct {
 	// requesting, so this is what turns "nobody is watching" into zero RCON
 	// traffic.
 	IdleAfterSeconds int `name:"idleAfterSeconds" default:"30" description:"seconds without a browser request after which polling stops"`
+	// Health is separate from the position poll because it costs one command
+	// per player rather than one per poll: the game only reports it per player.
+	// An operator who would rather spend none of their tick budget on it turns
+	// it off here and loses nothing else.
+	Health bool `name:"health" default:"true" description:"sample player health while the map has viewers"`
+	// The budget that keeps health from scaling with population: each poll asks
+	// at most this many players, least recently asked first, so every player
+	// refreshes every ceil(players/healthPerPoll) polls. Raising it buys fresher
+	// health at a proportional cost in game-thread time.
+	HealthPerPoll int `name:"healthPerPoll" default:"4" description:"players whose health is sampled per poll; health ages between samples, positions do not"`
+}
+
+// HealthBudget returns how many players' health one poll may ask for, which is
+// nobody when health sampling is switched off. The poller takes one number
+// rather than a flag and a number so that two code paths cannot disagree about
+// whether health is on.
+func (p Poller) HealthBudget() int {
+	if !p.Health {
+		return 0
+	}
+	return p.HealthPerPoll
 }
 
 // Interval returns the gap between polls while the map has viewers.
@@ -221,6 +248,37 @@ func (p Poller) Interval() time.Duration {
 // IdleAfter returns how long after the last browser request polling stops.
 func (p Poller) IdleAfter() time.Duration {
 	return time.Duration(p.IdleAfterSeconds) * time.Second
+}
+
+// validate reports every problem with the polling settings, in the same
+// accumulate-everything spirit as Config.Validate. It lives here rather than
+// inline up there because the poller has grown a third knob and that function
+// was already at the complexity the linter allows; the checks themselves are
+// unchanged.
+func (p Poller) validate() []error {
+	var errs []error
+
+	if p.IntervalSeconds < 1 || p.IntervalSeconds > MaxPollIntervalSeconds {
+		errs = append(errs, fmt.Errorf("poller.intervalSeconds %d must be between 1 and %d",
+			p.IntervalSeconds, MaxPollIntervalSeconds))
+	}
+	// The idle window must outlast an interval: demand is stamped by browser
+	// requests that arrive at most one interval apart, so a shorter window
+	// would judge an active viewer idle between their own polls.
+	if p.IdleAfterSeconds < 1 || p.IdleAfterSeconds < p.IntervalSeconds ||
+		p.IdleAfterSeconds > MaxIdleAfterSeconds {
+		errs = append(errs, fmt.Errorf("poller.idleAfterSeconds %d must be between poller.intervalSeconds (%d) and %d",
+			p.IdleAfterSeconds, p.IntervalSeconds, MaxIdleAfterSeconds))
+	}
+	// Checked even when poller.health is false, so a nonsense budget is
+	// reported by the deployment that wrote it rather than by whoever flips the
+	// toggle months later. Turning health off is poller.health, not zero here.
+	if p.HealthPerPoll < 1 || p.HealthPerPoll > MaxHealthPerPoll {
+		errs = append(errs, fmt.Errorf("poller.healthPerPoll %d must be between 1 and %d",
+			p.HealthPerPoll, MaxHealthPerPoll))
+	}
+
+	return errs
 }
 
 // Validate reports every problem with the configuration at once, so a bad
@@ -281,18 +339,7 @@ func (c Config) Validate() error {
 		// could contradict them; make them name it instead.
 		errs = append(errs, errors.New("map.halfExtentX/map.halfExtentY cannot be combined with map.name auto; name the map they belong to"))
 	}
-	if c.Poller.IntervalSeconds < 1 || c.Poller.IntervalSeconds > MaxPollIntervalSeconds {
-		errs = append(errs, fmt.Errorf("poller.intervalSeconds %d must be between 1 and %d",
-			c.Poller.IntervalSeconds, MaxPollIntervalSeconds))
-	}
-	// The idle window must outlast an interval: demand is stamped by browser
-	// requests that arrive at most one interval apart, so a shorter window
-	// would judge an active viewer idle between their own polls.
-	if c.Poller.IdleAfterSeconds < 1 || c.Poller.IdleAfterSeconds < c.Poller.IntervalSeconds ||
-		c.Poller.IdleAfterSeconds > MaxIdleAfterSeconds {
-		errs = append(errs, fmt.Errorf("poller.idleAfterSeconds %d must be between poller.intervalSeconds (%d) and %d",
-			c.Poller.IdleAfterSeconds, c.Poller.IntervalSeconds, MaxIdleAfterSeconds))
-	}
+	errs = append(errs, c.Poller.validate()...)
 
 	if len(errs) > 0 {
 		return fmt.Errorf("invalid configuration: %w", errors.Join(errs...))

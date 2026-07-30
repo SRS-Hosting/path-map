@@ -15,8 +15,8 @@ type Player struct {
 	AGID     string `json:"agid"`
 	Dinosaur string `json:"dinosaur"`
 	Role     string `json:"role"`
-	// Marks is in-game currency. It is parsed because it is present, but the
-	// page does not surface it: wealth is not position data.
+	// Marks is in-game currency. Not position data, but the roster shows it
+	// because it is free: it is already in every record.
 	Marks  int     `json:"marks"`
 	Growth float64 `json:"growth"`
 	// X, Y, Z are Unreal world units (centimetres).
@@ -31,6 +31,25 @@ type Player struct {
 	// HasPosition is false when the record's Location could not be parsed;
 	// the player is still listed, just not drawn.
 	HasPosition bool `json:"hasPosition"`
+	// Health and MaxHealth are absolute hit points, never percentages. A live
+	// server answered Health=96.534752 with MaxHealth=850: that player was at
+	// 11%, not 96%. They come from the per-player attribute commands rather
+	// than PlayerInfoAll, a few players per poll, so they are older than the
+	// position beside them by design; see health.go.
+	Health    float64 `json:"health"`
+	MaxHealth float64 `json:"maxHealth"`
+	// HealthPercent is Health/MaxHealth as 0–100, and is the only one of the
+	// three figures anything may be coloured or sized by.
+	HealthPercent float64 `json:"healthPercent"`
+	// HasHealth is false when health has not been sampled yet, when the player
+	// has no pawn, and when health sampling is switched off. All three render
+	// as unknown: a zero shown as 0% paints a healthy player as dying.
+	HasHealth bool `json:"hasHealth"`
+	// HealthAgeSeconds is how old the health reading was when the snapshot was
+	// built. Health refreshes a few players at a time, so its age is not the
+	// snapshot's age, and this field is the only thing that knows the
+	// difference. Omitted when there is no reading to age.
+	HealthAgeSeconds float64 `json:"healthAgeSeconds,omitempty"`
 }
 
 // Snapshot is one complete poll result.
@@ -175,4 +194,19 @@ func parseRecord(record string) Player {
 // preserved, not clamped: players past the painted edge are real.
 func uv(x, y, halfX, halfY float64) (u, v float64) {
 	return (x + halfX) / (2 * halfX), (y + halfY) / (2 * halfY)
+}
+
+// xy is uv's inverse: it turns a point on the unit square of the map image
+// back into a world coordinate. The teleport path needs it because a drag on
+// the map produces image space and the game speaks Unreal units, and it is
+// the server's job rather than the browser's because the half extents are
+// deliberately not serialised to the page.
+//
+// Like uv it neither clamps nor rejects — u outside [0, 1] returns the world
+// point past the painted edge, and refusing that is the caller's policy, not
+// this arithmetic's. The two are exact inverses at the identities that matter:
+// 0.5 is the origin and 0 and 1 are the extents, because 2*half is a power-of-
+// two scaling and the subtraction that follows cancels it exactly.
+func xy(u, v, halfX, halfY float64) (x, y float64) {
+	return u*2*halfX - halfX, v*2*halfY - halfY
 }

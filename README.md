@@ -4,8 +4,8 @@
 
 A live, browser-viewable player map for a self-hosted
 [Path of Titans](https://pathoftitans.com) dedicated server, read over RCON.
-Everyone online appears on the map with species and growth — no client mods,
-no players pasting `/mapbug` coordinates.
+Everyone online appears on the map with species, growth, and health — no client
+mods, no players pasting `/mapbug` coordinates.
 
 Single static binary, `FROM scratch` container. Polling is demand-driven:
 while nobody has the map open, your game server hears nothing.
@@ -59,6 +59,8 @@ default.
 | `map.halfExtentY` | `MAP_HALFEXTENTY` | `0` | |
 | `poller.intervalSeconds` | `POLLER_INTERVALSECONDS` | `10` | |
 | `poller.idleAfterSeconds` | `POLLER_IDLEAFTERSECONDS` | `30` | |
+| `poller.health` | `POLLER_HEALTH` | `true` | sample player health |
+| `poller.healthPerPoll` | `POLLER_HEALTHPERPOLL` | `4` | players sampled per poll |
 
 - The map is auto-detected by default; set `map.name` to pin it. The
   official maps have calibrated world-to-image coordinates built in
@@ -77,5 +79,14 @@ default.
 - If the server hiccups, the map keeps showing the last good snapshot with a
   visible stale label; a partial response renders what arrived, marked
   incomplete. It never blanks and never fails silently.
+- Health is per-player over RCON — the game will not report it for everyone at
+  once — so it is budgeted instead of scraped: each poll asks at most
+  `poller.healthPerPoll` players, least recently asked first, and every player
+  refreshes every `ceil(players / healthPerPoll)` polls. Positions keep their
+  full cadence; health ages, and the roster says how old each reading is.
+  Markers fill by health and colour by band (red, yellow, green, blue at full);
+  a player nobody has sampled yet, or who has no pawn, shows grey and reads
+  "unknown" rather than pretending to be at 0%. `poller.health: false` turns it
+  off and costs the game nothing.
 - The web surface is read-only and unauthenticated. If player positions
   should not be public, put it behind your ingress's authentication.
