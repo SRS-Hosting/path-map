@@ -16,6 +16,7 @@
     --dim: #8b93a1;
     --accent: #7fb2ff;
     --ok: #6ee7a8;
+    --warn: #ffd479;
     --err: #ff8c8c;
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   }
@@ -99,6 +100,18 @@
   }
 
   #markers { position: absolute; inset: 0; }
+
+  /* Health bands. The colour travels in a custom property so one set of rules
+     serves both the marker fill and the roster readout, and the thresholds
+     live in exactly one place — the script that sets data-hp. Blue at exactly
+     full keeps a healthy server looking like this map always has. Grey is
+     "nobody has asked yet", which must never be mistaken for the red of nearly
+     dead. */
+  [data-hp="unknown"] { --hp-color: var(--dim); }
+  [data-hp="low"] { --hp-color: var(--err); }
+  [data-hp="mid"] { --hp-color: var(--warn); }
+  [data-hp="high"] { --hp-color: var(--ok); }
+  [data-hp="full"] { --hp-color: var(--accent); }
 
   .marker {
     position: absolute;
@@ -191,6 +204,14 @@
 
   #roster li .hp {
     color: var(--hp-color, var(--dim));
+    font-size: 12px;
+  }
+
+  /* Stamina sits under health in the same shape but never takes its colour:
+     the bands are health's alarm, and a second coloured line would halve the
+     value of the first. */
+  #roster li .sp {
+    color: var(--dim);
     font-size: 12px;
   }
 
@@ -476,14 +497,17 @@
     }, 1200);
   }
 
-  // Health arrives as absolute hit points plus a percentage the server already
-  // computed. Only healthPercent may be coloured or sized by: the server
+  // Vitals arrive as absolute values plus percentages the server already
+  // computed. Only the percentages may be coloured or sized by: the server
   // reports 96.5 health against a maximum of 850, so the raw number belongs to
   // a player at 11%, and treating it as a percentage would paint them green.
+  // Stamina is the same, and more insidious — its maximum was 100 on the server
+  // we watched, so the raw value passes for a percentage until the day it does
+  // not.
   //
-  // hasHealth false covers three cases that all mean the same thing to a
-  // viewer — not sampled yet, no pawn, sampling switched off — and none of them
-  // may render as 0%, which is what a dying player looks like.
+  // has* false covers three cases that all mean the same thing to a viewer —
+  // not sampled yet, no pawn, sampling switched off — and none of them may
+  // render as 0%, which is what a dying player looks like.
   function healthBand(p) {
     if (!p.hasHealth) { return "unknown"; }
     if (p.healthPercent >= 100) { return "full"; }
@@ -492,10 +516,21 @@
     return "low";
   }
 
+  // One formatter for both vitals: the percentage first because it is the
+  // figure that means something, the absolutes after it because they are what
+  // an admin types into a command.
+  function vitalText(has, percent, value, maxValue, label) {
+    if (!has) { return label + " unknown"; }
+    return Math.round(percent) + "% " + label + " · " +
+      Math.round(value) + "/" + Math.round(maxValue);
+  }
+
   function healthText(p) {
-    if (!p.hasHealth) { return "hp unknown"; }
-    return Math.round(p.healthPercent) + "% hp · " +
-      Math.round(p.health) + "/" + Math.round(p.maxHealth);
+    return vitalText(p.hasHealth, p.healthPercent, p.health, p.maxHealth, "hp");
+  }
+
+  function staminaText(p) {
+    return vitalText(p.hasStamina, p.staminaPercent, p.stamina, p.maxStamina, "sp");
   }
 
   // Marks reach seven figures on a long-lived server and the roster is a 240px
@@ -516,25 +551,23 @@
     playerCount = list.length;
 
     var seen = new Set();
-    playerByKey.clear();
     list.forEach(function (p) {
       var key = p.agid || p.name;
       if (!p.hasPosition) { return; }
       seen.add(key);
-      playerByKey.set(key, p);
       var m = markers.get(key);
       if (!m) {
         m = document.createElement("div");
         m.className = "marker";
-        m.dataset.key = key;
         var label = document.createElement("span");
         label.className = "label";
         m.appendChild(label);
         markersEl.appendChild(m);
         markers.set(key, m);
       }
-      // Health is independent of position, so it refreshes even while a marker
-      // is held: an admin dragging someone should still see them bleeding.
+      // Clamped for display only; the data keeps its out-of-bounds truth.
+      m.style.left = (clamp01(p.u) * 100) + "%";
+      m.style.top = (clamp01(p.v) * 100) + "%";
       // The band picks the colour; --hp is the waterline. It is left unset for
       // unknown health so the stylesheet's solid-grey rule can win — an inline
       // 0% would beat it and show the empty circle that means "dying".
@@ -544,7 +577,10 @@
       } else {
         m.style.removeProperty("--hp");
       }
-      m.title = p.name + " · " + healthText(p);
+      // Stamina rides along in the tooltip only. The fill and its colour are
+      // the health signal and stay that way: a second gauge on a 10px circle
+      // would make neither readable.
+      m.title = p.name + " · " + healthText(p) + " · " + staminaText(p);
       m.firstChild.textContent = p.name;
     });
     markers.forEach(function (m, key) {
@@ -566,18 +602,26 @@
         // The abbreviated figure loses digits, so the exact one stays reachable
         // without spending a line on it.
         if (p.marks >= 1e4) { meta.title = p.marks.toLocaleString() + " marks"; }
+        // Vitals refresh a few players per poll, so their age is not the
+        // snapshot's age and is worth saying out loud. One age covers both: they
+        // come out of the same answer.
+        var sampledAgo = "sampled " + Math.round(p.healthAgeSeconds || 0) + "s ago";
         var hp = document.createElement("span");
         hp.className = "hp";
         hp.dataset.hp = healthBand(p);
         hp.textContent = healthText(p);
-        // Health refreshes a few players per poll, so its age is not the
-        // snapshot's age and is worth saying out loud.
-        if (p.hasHealth) {
-          hp.title = "sampled " + Math.round(p.healthAgeSeconds || 0) + "s ago";
-        }
+        if (p.hasHealth) { hp.title = sampledAgo; }
+        // Stamina is deliberately uncoloured. Health owns the colour vocabulary
+        // — on the marker and here — so one glance down the roster answers "who
+        // is dying" without stamina competing for the same alarm.
+        var sp = document.createElement("span");
+        sp.className = "sp";
+        sp.textContent = staminaText(p);
+        if (p.hasStamina) { sp.title = sampledAgo; }
         row.appendChild(name);
         row.appendChild(meta);
         row.appendChild(hp);
+        row.appendChild(sp);
         if (p.agid) {
           var agid = document.createElement("span");
           agid.className = "agid";

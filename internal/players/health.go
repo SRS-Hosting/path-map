@@ -11,23 +11,18 @@ import (
 	"time"
 )
 
-// Health is the one player attribute PlayerInfoAll does not carry: it only
-// answers per player, through the attribute commands. Both shapes are verified
-// against a live server:
+// Health and stamina are the player attributes PlayerInfoAll does not carry:
+// they only answer per player, through the attribute commands. Both answer
+// shapes are verified against a live server:
 //
-//	(GetAllAttr kittykat95): LocomotionState=3.000000, Health=96.534752, MaxHealth=850.000000, HealthRecoveryRate=1.900000, ... Growth=1.000000, ...
+//	(GetAllAttr kittykat95): LocomotionState=3.000000, Health=96.534752, MaxHealth=850.000000, HealthRecoveryRate=1.900000, ... Stamina=33.199955, MaxStamina=100.000000, ... Growth=1.000000, ...
 //	(GetAttr kittykat95 Health): Property health is 96.708755.
 //
 // GetAllAttr answers about 4200 bytes — two RCON round trips once the client
-// pages it — and carries MaxHealth alongside Health. GetAttr answers in one
-// round trip with a single value, its name lower-cased in the message. That
-// asymmetry is the whole reason MaxHealth is cached rather than re-read; see
-// refreshHealth.
-const (
-	commandGetAllAttr = "GetAllAttr"
-	commandGetAttr    = "GetAttr"
-	attrHealth        = "Health"
-)
+// pages it — and carries every value and maximum at once. GetAttr answers in
+// one round trip with a single value, its name lower-cased in the message.
+// refreshHealth explains why one GetAllAttr beats a GetAttr per value.
+const commandGetAllAttr = "GetAllAttr"
 
 // noPawnMarker is how the game answers for a player who has no body right now:
 // sitting in a menu, or dead and not yet respawned. It is a normal state, not
@@ -35,48 +30,65 @@ const (
 // opens the map screen writes a warning line.
 const noPawnMarker = "no player pawn"
 
-// growthEpsilon is how far Growth may drift before a cached MaxHealth is
-// re-read. MaxHealth is a function of species and growth, so it moves only as
-// a player grows, and growth creeps continuously: an exact comparison would
-// spend the expensive paginating command on every sample of every growing
-// player. Half a percent of growth moves MaxHealth by far less than the width
-// of one colour band on the page.
-const growthEpsilon = 0.005
+// vital is one paired reading: an absolute value and the maximum it is a
+// fraction of. Health and stamina are the same shape, and holding them in the
+// same type is what keeps the percentage rule — always value over max, never
+// the raw value — from having to be restated once per vital and got wrong once
+// per vital.
+//
+// Each half carries its own "was it there" flag, because a missing key has to
+// leave the reading unknown rather than zero: zero health rendered as 0% is an
+// emergency the page would be inventing.
+type vital struct {
+	value    float64
+	max      float64
+	hasValue bool
+	hasMax   bool
+}
 
-// attrs is what one attribute answer yielded. Every value carries its own
-// "was it there" flag, because a missing key has to leave health unknown
-// rather than zero: zero health rendered as 0% is an emergency the page would
-// be inventing.
+// percent returns the reading as 0–100 of its maximum, and false when there is
+// no honest answer — no value, no maximum, or a maximum that cannot be divided
+// by.
+func (v vital) percent() (float64, bool) {
+	if !v.hasValue || !v.hasMax {
+		return 0, false
+	}
+	return percentOf(v.value, v.max)
+}
+
+// adopt takes a fresh reading, falling back to the cached maximum when the
+// answer carried a value but no maximum: a value without its maximum makes no
+// percentage at all, and maxima barely move, so the remembered one beats
+// nothing. The value itself is never inherited — we just asked, and what came
+// back is the truth, including the truth that nothing came back.
+func adopt(cached, fresh vital) vital {
+	if !fresh.hasMax && cached.hasMax {
+		fresh.max, fresh.hasMax = cached.max, true
+	}
+	return fresh
+}
+
+// attrs is what one attribute answer yielded.
 type attrs struct {
-	health       float64
-	hasHealth    bool
-	maxHealth    float64
-	hasMaxHealth bool
+	health  vital
+	stamina vital
 	// noPawn is the game reporting that the player is not spawned.
 	noPawn bool
 }
 
-// healthEntry is one player's last known health. It deliberately outlives the
+// healthEntry is one player's last known vitals. It deliberately outlives the
 // poll that fetched it: only a few players are sampled per cycle, so every
 // snapshot is decorated from this cache rather than from the answers of the
 // cycle that published it.
 type healthEntry struct {
-	health    float64
-	hasHealth bool
-	maxHealth float64
-	hasMax    bool
-	// growthAtMax and speciesAtMax are the readings MaxHealth was sampled
-	// against, and together they are what invalidates it: a maximum is a
-	// function of species and growth. Watching growth alone would let a player
-	// who swapped dinosaur at the same growth keep the maximum of the body they
-	// left, and a wrong maximum is a wrong colour on the map.
-	growthAtMax  float64
-	speciesAtMax string
-	// sampledAt is when health last had a value; triedAt is when it was last
-	// asked for. They diverge while a player has no pawn or the game refuses to
-	// answer, and keeping them apart does two jobs: rotation runs off triedAt,
-	// so a player who can never be sampled cannot starve everyone behind them,
-	// while the age the page shows runs off sampledAt and stays honest.
+	health  vital
+	stamina vital
+	// sampledAt is when the vitals last had a value; triedAt is when they were
+	// last asked for. They diverge while a player has no pawn or the game
+	// refuses to answer, and keeping them apart does two jobs: rotation runs off
+	// triedAt, so a player who can never be sampled cannot starve everyone
+	// behind them, while the age the page shows runs off sampledAt and stays
+	// honest.
 	sampledAt time.Time
 	triedAt   time.Time
 }
@@ -94,8 +106,13 @@ var (
 )
 
 // parseAttrs reads either attribute answer shape. Like Parse, it never fails:
-// an unrecognised layout yields no readings rather than a wrong one, because
-// health the page marks as unknown is safe and health the page invents is not.
+// an unrecognised layout yields no readings rather than a wrong one, because a
+// vital the page marks as unknown is safe and one the page invents is not.
+//
+// The single-value form is still accepted even though the poller no longer
+// asks that way. It is verified protocol, it costs one regex, and an operator
+// pasting a GetAttr answer into a test — or a future cheap path — must not need
+// the parser changed first.
 func parseAttrs(raw string) attrs {
 	var a attrs
 	raw = strings.ReplaceAll(raw, "\r", "")
@@ -110,7 +127,7 @@ func parseAttrs(raw string) attrs {
 		a.set(m[1], m[2])
 	}
 	// Then the GetAllAttr form: about 150 comma-separated Key=Value pairs, of
-	// which two matter. Unknown keys are ignored so a game update adding
+	// which four matter. Unknown keys are ignored so a game update adding
 	// attributes — or a page seam eating one — costs nothing.
 	for field := range strings.SplitSeq(body, ",") {
 		key, value, ok := strings.Cut(field, "=")
@@ -122,7 +139,7 @@ func parseAttrs(raw string) attrs {
 	return a
 }
 
-// set records one key if it is one of the two that matter. A value that does
+// set records one key if it is one of the four that matter. A value that does
 // not parse leaves its flag false: an unreadable number is not a reading.
 func (a *attrs) set(key, value string) {
 	value = strings.TrimSuffix(strings.TrimSpace(value), ".")
@@ -132,28 +149,35 @@ func (a *attrs) set(key, value string) {
 	}
 	switch strings.ToLower(strings.TrimSpace(key)) {
 	case "health":
-		a.health, a.hasHealth = f, true
+		a.health.value, a.health.hasValue = f, true
 	case "maxhealth":
-		a.maxHealth, a.hasMaxHealth = f, true
+		a.health.max, a.health.hasMax = f, true
+	case "stamina":
+		a.stamina.value, a.stamina.hasValue = f, true
+	case "maxstamina":
+		a.stamina.max, a.stamina.hasMax = f, true
 	}
 }
 
-// healthPercent converts an absolute health reading into 0–100 of maximum.
+// percentOf converts an absolute reading into 0–100 of its maximum.
 //
-// This is the most dangerous number in the application to get wrong. A live
+// This is the most dangerous arithmetic in the application to get wrong. A live
 // server answered Health=96.534752 with MaxHealth=850: read as a percentage
 // that player looks barely scratched, when they are in fact at 11% and one hit
-// from dead. Health is therefore always divided by MaxHealth, and a MaxHealth
+// from dead. Stamina hides the same trap behind a coincidence — its maximum was
+// 100 on the server we watched, so the raw value and the percentage happened to
+// agree, and a build that scales stamina differently would expose anyone who
+// leaned on that. So every reading is divided by its own maximum, and a maximum
 // that is missing, zero, or nonsense yields no percentage at all rather than a
 // flattering one.
-func healthPercent(health, maxHealth float64) (float64, bool) {
-	if math.IsNaN(health) || math.IsInf(health, 0) ||
-		math.IsNaN(maxHealth) || math.IsInf(maxHealth, 0) || maxHealth <= 0 {
+func percentOf(value, maxValue float64) (float64, bool) {
+	if math.IsNaN(value) || math.IsInf(value, 0) ||
+		math.IsNaN(maxValue) || math.IsInf(maxValue, 0) || maxValue <= 0 {
 		return 0, false
 	}
 	// Clamped so the page's colour bands stay total: they end at exactly 100,
 	// and a server reporting overheal would otherwise land in no band at all.
-	return min(100, max(0, health/maxHealth*100)), true
+	return min(100, max(0, value/maxValue*100)), true
 }
 
 // healthKey identifies a player in the health cache: the AGID, which is the
@@ -166,27 +190,44 @@ func healthKey(p Player) string {
 	return p.Name
 }
 
-// refreshHealth samples health for a bounded slice of the roster and updates
-// the cache. It is the answer to the one problem health poses on this stack:
-// health only answers per player, so the obvious implementation issues one
-// command per player per poll — at 100 players, 100 game-thread round trips
+// refreshHealth samples the vitals of a bounded slice of the roster and updates
+// the cache. It is the answer to the one problem health and stamina pose on
+// this stack: they only answer per player, so the obvious implementation issues
+// a command per player per poll — at 100 players, 100 game-thread round trips
 // every cycle, which is precisely the tax this whole application exists to
 // avoid.
 //
-// The cost is therefore fixed rather than proportional. At most healthPerPoll
-// players are sampled per poll, least recently tried first, so every player's
-// health refreshes once every ceil(players/healthPerPoll) cycles: positions
-// keep their full cadence and health ages gracefully, carrying its own age so
-// nobody has to guess. On a server small enough for the budget to cover
-// everyone, health is as fresh as position for free.
+// The cost is therefore fixed rather than proportional to population. Per poll
+// it is at most healthPerPoll attribute commands — one GetAllAttr per sampled
+// player, each on one connection with one authentication — and because that
+// answer runs about 4200 bytes the client follows it with a Page: fetch on the
+// same connection, so each sample is roughly two game-thread exchanges. At the
+// default budget of 4: 4 connections, 4 gathers, ~8 exchanges per poll, whether
+// 5 players are online or 500. Players are sampled least recently tried first,
+// so everyone's vitals refresh once every ceil(players/healthPerPoll) cycles:
+// positions keep their full cadence, vitals age gracefully and carry their own
+// age so nobody has to guess. On a server small enough for the budget to cover
+// everyone, vitals are as fresh as position for free.
 //
-// Steady state is one GetAttr per sampled player, one round trip. GetAllAttr
-// costs two because its answer pages, and is spent only when MaxHealth is
-// unknown or the player has grown since it was read — without MaxHealth a
-// health figure cannot be turned into a percentage at all.
+// One GetAllAttr rather than a GetAttr per value, now that stamina doubles the
+// values wanted:
+//
+//   - Two GetAttr calls are two connections, two authentications and two full
+//     attribute gathers on the game thread, for the same two exchanges. The
+//     Page: follow-up GetAllAttr needs is a read out of a buffer the game has
+//     already built, on a connection that is already open — the cheap half of
+//     the exchange, not a second gather.
+//   - GetAllAttr carries both maxima every time, so a maximum can never sit
+//     stale: growth, a species swap, a rebalance patch, all heal on the next
+//     sample with no invalidation rule to get wrong. The health-only design
+//     needed one and it was the subtlest code here.
+//
+// The command count per poll is therefore unchanged from the health-only
+// design, whose cold path was already GetAllAttr; only the page follow-ups are
+// new, which is why the budget's default did not have to move.
 //
 // Failures are contained here and never reach the caller: the map must keep
-// working exactly as it did before health existed.
+// working exactly as it did before vitals existed.
 func (p *Poller) refreshHealth(ctx context.Context, list []Player) {
 	if p.healthPerPoll <= 0 {
 		return
@@ -200,59 +241,47 @@ func (p *Poller) refreshHealth(ctx context.Context, list []Player) {
 		entry := p.healthCache[key]
 		entry.triedAt = now
 
-		body, err := p.execute(ctx, healthCommand(player, entry))
+		body, err := p.execute(ctx, commandGetAllAttr+" "+player.Name)
 		if err != nil {
 			// An RCON-level failure here means the server is unreachable or
 			// wedged, and the rest of the budget would spend one timeout each
 			// discovering the same thing — delaying the next position poll for
-			// no information. The entry keeps its last known value: failing to
+			// no information. The entry keeps its last known values: failing to
 			// ask is not evidence about the player.
 			p.healthCache[key] = entry
-			slog.Debug("health sampling stopped early", "player", player.Name, "error", err)
+			slog.Debug("vitals sampling stopped early", "player", player.Name, "error", err)
 			break
 		}
 
 		a := parseAttrs(body)
 		switch {
 		case a.noPawn:
-			// Not spawned. There is no health to report and nothing has gone
-			// wrong; the reading goes back to unknown so the page stops showing
-			// a figure from before they left their body.
-			entry.hasHealth = false
+			// Not spawned. There are no vitals to report and nothing has gone
+			// wrong; the readings go back to unknown so the page stops showing
+			// figures from before they left their body. The maxima are kept:
+			// they describe the body they will spawn into.
+			entry.health.hasValue, entry.stamina.hasValue = false, false
 			unknown++
-		case a.hasHealth:
-			entry.health, entry.hasHealth = a.health, true
+		case a.health.hasValue || a.stamina.hasValue:
+			// Each vital is adopted independently, so an answer carrying health
+			// but no stamina degrades stamina alone rather than both.
+			entry.health = adopt(entry.health, a.health)
+			entry.stamina = adopt(entry.stamina, a.stamina)
 			entry.sampledAt = now
 			sampled++
 		default:
-			// An answer that carried no health at all: a build without the
+			// An answer that carried no vitals at all: a build without the
 			// command, or a layout change. Degrade to unknown, and stay at
 			// debug — this repeats every cycle, so it must not be a warning.
-			entry.hasHealth = false
+			entry.health.hasValue, entry.stamina.hasValue = false, false
 			unknown++
-			slog.Debug("health answer carried no reading", "player", player.Name, "bytes", len(body))
-		}
-		if a.hasMaxHealth {
-			entry.maxHealth, entry.hasMax = a.maxHealth, true
-			entry.growthAtMax, entry.speciesAtMax = player.Growth, player.Dinosaur
+			slog.Debug("vitals answer carried no reading", "player", player.Name, "bytes", len(body))
 		}
 		p.healthCache[key] = entry
 	}
 
-	slog.Debug("health sampled", "players", sampled, "unknown", unknown,
+	slog.Debug("vitals sampled", "players", sampled, "unknown", unknown,
 		"budget", p.healthPerPoll, "roster", len(list))
-}
-
-// healthCommand picks the cheap or the expensive question for one player. The
-// expensive one is only worth it when the percentage could not be computed
-// without it: no cached maximum, or one that belongs to a body this player no
-// longer has.
-func healthCommand(player Player, entry healthEntry) string {
-	if !entry.hasMax || entry.speciesAtMax != player.Dinosaur ||
-		math.Abs(player.Growth-entry.growthAtMax) > growthEpsilon {
-		return commandGetAllAttr + " " + player.Name
-	}
-	return commandGetAttr + " " + player.Name + " " + attrHealth
 }
 
 // healthTargets picks which players this cycle samples: the ones tried longest
@@ -281,25 +310,37 @@ func (p *Poller) healthTargets(list []Player) []int {
 }
 
 // applyHealth stamps the cache onto a fresh snapshot. Every player is
-// decorated, not only the ones sampled this cycle — health surviving between
+// decorated, not only the ones sampled this cycle — vitals surviving between
 // samples is the entire point of the cache. A player with nothing cached keeps
-// HasHealth false, which the page renders as unknown rather than as 0%: an
-// unsampled player must never look like a dying one.
+// HasHealth and HasStamina false, which the page renders as unknown rather than
+// as 0%: an unsampled player must never look like a dying one. The two vitals
+// are stamped independently, so one of them missing never suppresses the other.
 func (p *Poller) applyHealth(list []Player, now time.Time) {
 	for i := range list {
 		entry, ok := p.healthCache[healthKey(list[i])]
-		if !ok || !entry.hasHealth || !entry.hasMax {
-			continue
-		}
-		pct, ok := healthPercent(entry.health, entry.maxHealth)
 		if !ok {
 			continue
 		}
-		list[i].Health = entry.health
-		list[i].MaxHealth = entry.maxHealth
-		list[i].HealthPercent = pct
-		list[i].HasHealth = true
-		list[i].HealthAgeSeconds = max(0, now.Sub(entry.sampledAt).Seconds())
+		known := false
+		if pct, ok := entry.health.percent(); ok {
+			list[i].Health = entry.health.value
+			list[i].MaxHealth = entry.health.max
+			list[i].HealthPercent = pct
+			list[i].HasHealth = true
+			known = true
+		}
+		if pct, ok := entry.stamina.percent(); ok {
+			list[i].Stamina = entry.stamina.value
+			list[i].MaxStamina = entry.stamina.max
+			list[i].StaminaPercent = pct
+			list[i].HasStamina = true
+			known = true
+		}
+		if known {
+			// One age for both: they come out of the same answer, taken at the
+			// same instant.
+			list[i].HealthAgeSeconds = max(0, now.Sub(entry.sampledAt).Seconds())
+		}
 	}
 }
 
@@ -307,9 +348,9 @@ func (p *Poller) applyHealth(list []Player, now time.Time) {
 // months does not accumulate an entry per player who ever visited.
 //
 // Only a complete snapshot may prune. A partial response is missing players
-// who are still there, and evicting them would throw away MaxHealth readings
-// that each cost a paginating command to obtain — a page loss would quietly
-// turn into a wave of expensive re-reads.
+// who are still there, and evicting them would throw away readings that each
+// cost a paginating command to obtain — a page loss would quietly turn into a
+// wave of re-reads.
 func (p *Poller) pruneHealth(list []Player, complete bool) {
 	if !complete {
 		return

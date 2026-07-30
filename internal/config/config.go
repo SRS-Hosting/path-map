@@ -200,9 +200,9 @@ const MaxPollIntervalSeconds = 3600
 // MaxIdleAfterSeconds bounds poller.idleAfterSeconds the same way.
 const MaxIdleAfterSeconds = 86400
 
-// MaxHealthPerPoll bounds poller.healthPerPoll. Health answers for one player
+// MaxHealthPerPoll bounds poller.healthPerPoll. Vitals answer for one player
 // per command, so this is the ceiling on how much game-thread time a single
-// poll may spend on it; a value anywhere near this is already the per-player
+// poll may spend on them; a value anywhere near this is already the per-player
 // scrape the budget exists to prevent.
 const MaxHealthPerPoll = 32
 
@@ -217,22 +217,23 @@ type Poller struct {
 	// requesting, so this is what turns "nobody is watching" into zero RCON
 	// traffic.
 	IdleAfterSeconds int `name:"idleAfterSeconds" default:"30" description:"seconds without a browser request after which polling stops"`
-	// Health is separate from the position poll because it costs one command
-	// per player rather than one per poll: the game only reports it per player.
-	// An operator who would rather spend none of their tick budget on it turns
-	// it off here and loses nothing else.
-	Health bool `name:"health" default:"true" description:"sample player health while the map has viewers"`
-	// The budget that keeps health from scaling with population: each poll asks
+	// Vitals are separate from the position poll because they cost one command
+	// per player rather than one per poll: the game only reports them per
+	// player. One command carries health and stamina together, so there is
+	// nothing to switch off separately; an operator who would rather spend none
+	// of their tick budget on either turns both off here and loses nothing else.
+	Health bool `name:"health" default:"true" description:"sample player vitals (health and stamina) while the map has viewers"`
+	// The budget that keeps vitals from scaling with population: each poll asks
 	// at most this many players, least recently asked first, so every player
 	// refreshes every ceil(players/healthPerPoll) polls. Raising it buys fresher
-	// health at a proportional cost in game-thread time.
-	HealthPerPoll int `name:"healthPerPoll" default:"4" description:"players whose health is sampled per poll; health ages between samples, positions do not"`
+	// vitals at a proportional cost in game-thread time.
+	HealthPerPoll int `name:"healthPerPoll" default:"4" description:"players whose vitals are sampled per poll; vitals age between samples, positions do not"`
 }
 
-// HealthBudget returns how many players' health one poll may ask for, which is
-// nobody when health sampling is switched off. The poller takes one number
-// rather than a flag and a number so that two code paths cannot disagree about
-// whether health is on.
+// HealthBudget returns how many players' vitals one poll may ask for, which is
+// nobody when sampling is switched off. The poller takes one number rather than
+// a flag and a number so that two code paths cannot disagree about whether
+// vitals are on.
 func (p Poller) HealthBudget() int {
 	if !p.Health {
 		return 0

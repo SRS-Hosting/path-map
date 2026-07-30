@@ -45,8 +45,19 @@ type Player struct {
 	// has no pawn, and when health sampling is switched off. All three render
 	// as unknown: a zero shown as 0% paints a healthy player as dying.
 	HasHealth bool `json:"hasHealth"`
-	// HealthAgeSeconds is how old the health reading was when the snapshot was
-	// built. Health refreshes a few players at a time, so its age is not the
+	// Stamina and MaxStamina are the same deal in the same answer: absolute,
+	// never a percentage. The observed maximum was 100, which makes the raw
+	// value look like a percentage by coincidence — nothing may rely on that,
+	// so StaminaPercent is computed the same way HealthPercent is.
+	Stamina        float64 `json:"stamina"`
+	MaxStamina     float64 `json:"maxStamina"`
+	StaminaPercent float64 `json:"staminaPercent"`
+	// HasStamina is independent of HasHealth: one answer can carry a value the
+	// other lacks, and each degrades to unknown on its own.
+	HasStamina bool `json:"hasStamina"`
+	// HealthAgeSeconds is how old the vitals were when the snapshot was built —
+	// both of them, since health and stamina arrive in one answer taken at one
+	// instant. Vitals refresh a few players at a time, so their age is not the
 	// snapshot's age, and this field is the only thing that knows the
 	// difference. Omitted when there is no reading to age.
 	HealthAgeSeconds float64 `json:"healthAgeSeconds,omitempty"`

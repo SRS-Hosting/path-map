@@ -39,11 +39,11 @@ type Poller struct {
 	// wake-up is a level, not a count.
 	wake chan struct{}
 
-	// healthPerPoll bounds how many players one poll may ask health for; 0
-	// switches health off entirely. refreshHealth explains why a budget is the
+	// healthPerPoll bounds how many players one poll may ask vitals for; 0
+	// switches sampling off entirely. refreshHealth explains why a budget is the
 	// only shape this feature can safely take.
 	healthPerPoll int
-	// healthCache holds the last known health per player, keyed by healthKey.
+	// healthCache holds the last known vitals per player, keyed by healthKey.
 	// It needs no lock of its own: only the Run goroutine touches it, and the
 	// snapshot it decorates is published under mu like every other one.
 	healthCache map[string]healthEntry
@@ -59,16 +59,16 @@ type Poller struct {
 	failed bool
 }
 
-// PollerOption is optional poller behaviour. Health is expressed this way
-// rather than as another positional parameter because it is genuinely optional:
-// a poller that was never asked to sample health must cost the game exactly
-// what it did before health existed.
+// PollerOption is optional poller behaviour. Vitals sampling is expressed this
+// way rather than as another positional parameter because it is genuinely
+// optional: a poller that was never asked for vitals must cost the game exactly
+// what it did before they existed.
 type PollerOption func(*Poller)
 
-// WithHealth enables health sampling for at most perPoll players per poll,
-// least recently sampled first. perPoll of zero or less leaves health off, so
-// the operator's switch and this budget are the same number and cannot
-// disagree.
+// WithHealth enables vitals sampling — health and stamina, which arrive in one
+// answer — for at most perPoll players per poll, least recently sampled first.
+// perPoll of zero or less leaves sampling off, so the operator's switch and this
+// budget are the same number and cannot disagree.
 func WithHealth(perPoll int) PollerOption {
 	return func(p *Poller) { p.healthPerPoll = perPoll }
 }
@@ -186,9 +186,9 @@ func (p *Poller) poll(ctx context.Context) {
 				snap.Players[i].X, snap.Players[i].Y, info.HalfExtentX, info.HalfExtentY)
 		}
 	}
-	// Health is skipped when the position poll already struggled: the game is
+	// Vitals are skipped when the position poll already struggled: the game is
 	// wedged or losing pages, and per-player commands would only make its next
-	// cycle worse. Health then simply ages one more interval, which it is built
+	// cycle worse. They then simply age one more interval, which they are built
 	// to do. Sampling happens before the timestamp so every reading is at most
 	// as old as the snapshot claiming to carry it, and it cannot fail its way
 	// out of publishing what the positions already proved.

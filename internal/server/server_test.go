@@ -34,11 +34,15 @@ const (
 
 const gondwaPOIBody = "(ListPOI): Impact Crater, Grand Plains, Titan's Pass, Snake Gully, Savanna Grassland, Salt Flats, Burned Forest, Red Island"
 
-// kittyAttrs is the verified GetAllAttr shape, trimmed. The numbers are the
-// live ones: 96.5 hit points of 850 is a player at 11%, and the API must carry
-// that percentage rather than leave the page to mistake 96.5 for one.
+// kittyAttrs is the verified GetAllAttr shape, trimmed, and the one command the
+// poller spends on a player: health and stamina both come out of it. The health
+// numbers are the live ones — 96.5 hit points of 850 is a player at 11%, and the
+// API must carry that percentage rather than leave the page to mistake 96.5 for
+// one. Stamina's maximum is 250 rather than the 100 the live server reported, so
+// its value and its percentage differ and a missing division cannot pass.
 const kittyAttrs = "(GetAllAttr kittykat95): LocomotionState=3.000000, Health=96.534752, " +
-	"MaxHealth=850.000000, HealthRecoveryRate=1.900000, Growth=1.000000"
+	"MaxHealth=850.000000, HealthRecoveryRate=1.900000, Stamina=33.199955, " +
+	"MaxStamina=250.000000, Growth=1.000000"
 
 // fakeGame fakes the paginated game server. down makes new connections fail
 // authentication, which is how an outage is simulated: the client dials fresh
@@ -104,7 +108,7 @@ func (fg *fakeGame) respond(command string) string {
 	case "GetAllAttr kittykat95":
 		return kittyAttrs
 	case "GetAllAttr rex":
-		// Unspawned: a normal state that must reach the page as unknown health
+		// Unspawned: a normal state that must reach the page as unknown vitals
 		// rather than as 0%, which would draw him as an emergency.
 		return "(GetAllAttr rex): No Player Pawn."
 	default:
@@ -402,9 +406,9 @@ func TestPlayersEndToEnd(t *testing.T) {
 	}
 }
 
-// TestPlayersHealthFlowsThrough pins the API shape the page reads. Health is
-// serialised straight out of players.Player, so the field names, the computed
-// percentage, and the unknown case are all asserted here rather than assumed.
+// TestPlayersHealthFlowsThrough pins the API shape the page reads. Vitals are
+// serialised straight out of players.Player, so the field names, both computed
+// percentages, and the unknown case are all asserted here rather than assumed.
 func TestPlayersHealthFlowsThrough(t *testing.T) {
 	_, rs := newTestRCON(t)
 	s := newTestServer(t, testConfig(t, rs.Addr()))
@@ -424,22 +428,35 @@ func TestPlayersHealthFlowsThrough(t *testing.T) {
 		t.Errorf("kittykat95 is at %v%%, want ~11.4: Health is absolute hit points, and serving "+
 			"96.5 as a percentage would paint a dying player healthy", kitty.HealthPercent)
 	}
+	if kitty.Stamina != 33.199955 || kitty.MaxStamina != 250 {
+		t.Errorf("kittykat95 stamina = %v/%v, want the reported figures", kitty.Stamina, kitty.MaxStamina)
+	}
+	if kitty.StaminaPercent < 13 || kitty.StaminaPercent > 14 {
+		t.Errorf("kittykat95 is at %v%% stamina, want ~13.3: the maximum is not always 100, so the "+
+			"raw value is never the percentage", kitty.StaminaPercent)
+	}
 	if !kitty.HasPosition || kitty.U < 0.41 || kitty.U > 0.42 {
-		t.Errorf("kittykat95 = %+v, want her position untouched by the health step", kitty)
+		t.Errorf("kittykat95 = %+v, want her position untouched by the vitals step", kitty)
 	}
 
-	// rex has no pawn. Unknown health must serialise as unknown, not as a zero
+	// rex has no pawn. Unknown vitals must serialise as unknown, not as zeros
 	// the page would draw in red.
 	rex := got.Players[1]
 	if rex.HasHealth || rex.HealthPercent != 0 || rex.Health != 0 {
 		t.Errorf("rex = %+v, want unknown health for a player with no pawn", rex)
+	}
+	if rex.HasStamina || rex.StaminaPercent != 0 || rex.Stamina != 0 {
+		t.Errorf("rex = %+v, want unknown stamina for a player with no pawn", rex)
 	}
 	if got.Error != "" {
 		t.Errorf("error = %q; an unspawned player is not a failure", got.Error)
 	}
 
 	raw := getRec(t, s, "/api/players").Body.String()
-	for _, field := range []string{`"health":`, `"maxHealth":`, `"healthPercent":`, `"hasHealth":`} {
+	for _, field := range []string{
+		`"health":`, `"maxHealth":`, `"healthPercent":`, `"hasHealth":`,
+		`"stamina":`, `"maxStamina":`, `"staminaPercent":`, `"hasStamina":`,
+	} {
 		if !strings.Contains(raw, field) {
 			t.Errorf("payload is missing %s, which the page reads by name: %s", field, raw)
 		}

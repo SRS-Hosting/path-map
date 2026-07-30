@@ -136,11 +136,13 @@ func (fg *fakeGame) countPrefix(prefix string) int {
 	return n
 }
 
-// countHealth is the number the budget is about: every command spent on health,
-// cheap or paginating. "GetAllAttr" does not start with "GetAttr", so the two
-// prefixes do not double count.
+// countHealth is the number the budget is about: every command spent on vitals.
+// It counts both attribute commands, not just the one the poller issues, so a
+// change that starts asking per value shows up as a budget breach instead of
+// slipping past. "GetAllAttr" does not start with "GetAttr ", so the two
+// prefixes cannot double count.
 func (fg *fakeGame) countHealth() int {
-	return fg.countPrefix(commandGetAttr) + fg.countPrefix(commandGetAllAttr)
+	return fg.countPrefix("GetAttr ") + fg.countPrefix(commandGetAllAttr)
 }
 
 // rosterBody builds a PlayerInfoAll answer in the verified bare layout for the
@@ -155,25 +157,23 @@ func rosterBody(growth float64, names ...string) string {
 	return b.String()
 }
 
-// scriptHealth teaches the fake both attribute answers for each player: the
-// paginating one that carries MaxHealth, and the cheap one that does not.
-func (fg *fakeGame) scriptHealth(names []string, health, maxHealth float64) {
+// scriptHealth teaches the fake the attribute answer for each player: one
+// GetAllAttr carrying both vitals and both maxima, which is what the real
+// command does.
+func (fg *fakeGame) scriptHealth(names []string, health, maxHealth, stamina, maxStamina float64) {
 	for _, name := range names {
 		fg.set(commandGetAllAttr+" "+name, fmt.Sprintf(
-			"(GetAllAttr %s): LocomotionState=3.000000, Health=%f, MaxHealth=%f, Growth=1.000000",
-			name, health, maxHealth))
-		// The game lower-cases the attribute name in this message.
-		fg.set(commandGetAttr+" "+name+" "+attrHealth, fmt.Sprintf(
-			"(GetAttr %s Health): Property health is %f.", name, health))
+			"(GetAllAttr %s): LocomotionState=3.000000, Health=%f, MaxHealth=%f, "+
+				"Stamina=%f, MaxStamina=%f, Growth=1.000000",
+			name, health, maxHealth, stamina, maxStamina))
 	}
 }
 
-// scriptHealthAnswer makes every attribute command for these players answer the
-// same body: for a game that has no pawn to report, or no such command.
+// scriptHealthAnswer makes the attribute command for these players answer the
+// given body: for a game with no pawn to report, or no such command.
 func (fg *fakeGame) scriptHealthAnswer(names []string, body string) {
 	for _, name := range names {
 		fg.set(commandGetAllAttr+" "+name, body)
-		fg.set(commandGetAttr+" "+name+" "+attrHealth, body)
 	}
 }
 
@@ -517,38 +517,43 @@ func TestPollerStopsOnCancel(t *testing.T) {
 	}
 }
 
-// The health tests all use the verified live reading: 96.5 hit points out of
+// The vitals tests all use the verified live readings: 96.5 hit points out of
 // 850, which is a player at 11% — not, as the raw number invites, one at 96%.
+// Stamina's maximum is deliberately not the 100 the live server reported: with
+// 250 the value and the percentage differ, so a missing division shows up here
+// instead of hiding behind a coincidence.
 const (
-	liveHealth    = 96.534752
-	liveMaxHealth = 850.0
+	liveHealth     = 96.534752
+	liveMaxHealth  = 850.0
+	liveStamina    = 33.199955
+	liveMaxStamina = 250.0
 )
 
 // healthNames is a four-player roster: more than any budget these tests grant,
 // so "one cycle cannot cover everyone" is the case under test.
 func healthNames() []string { return []string{"kittykat95", "rex", "trike", "ptera"} }
 
-// newHealthGame is a fake game with a roster and both attribute answers for
-// every player in it.
+// newHealthGame is a fake game with a roster and the attribute answer for every
+// player in it.
 func newHealthGame(t *testing.T, growth float64) (*fakeGame, *rcon.Client) {
 	t.Helper()
 	fg, client := newFakeGame(t)
 	fg.set(commandPlayerInfoAll, rosterBody(growth, healthNames()...))
-	fg.scriptHealth(healthNames(), liveHealth, liveMaxHealth)
+	fg.scriptHealth(healthNames(), liveHealth, liveMaxHealth, liveStamina, liveMaxStamina)
 	return fg, client
 }
 
-// waitForHealth waits until every player in the snapshot carries a reading.
+// waitForHealth waits until every player in the snapshot carries both readings.
 func waitForHealth(t *testing.T, p *Poller) *Snapshot {
 	t.Helper()
 	var snap *Snapshot
-	waitFor(t, "health for every player", func() bool {
+	waitFor(t, "vitals for every player", func() bool {
 		snap, _, _ = p.Observe()
 		if snap == nil || len(snap.Players) != len(healthNames()) {
 			return false
 		}
 		for _, player := range snap.Players {
-			if !player.HasHealth {
+			if !player.HasHealth || !player.HasStamina {
 				return false
 			}
 		}
@@ -558,11 +563,10 @@ func waitForHealth(t *testing.T, p *Poller) *Snapshot {
 }
 
 // TestPollerHealthBudgetIsFlatInPlayerCount is the cost contract this feature
-// had to be designed around. Health only answers per player, so the obvious
-// implementation spends one command per player per poll — the linear
-// game-thread tax the whole application exists to avoid. Instead the spend per
-// poll is capped, and every player still gets a reading, just a cycle or two
-// later.
+// had to be designed around. Vitals only answer per player, so the obvious
+// implementation spends a command per player per poll — the linear game-thread
+// tax the whole application exists to avoid. Instead the spend per poll is
+// capped, and every player still gets a reading, just a cycle or two later.
 func TestPollerHealthBudgetIsFlatInPlayerCount(t *testing.T) {
 	const budget = 2
 	fg, client := newHealthGame(t, 1)
@@ -573,7 +577,7 @@ func TestPollerHealthBudgetIsFlatInPlayerCount(t *testing.T) {
 	p.Observe()
 	snap := waitForHealth(t, p)
 
-	// Health is read before the poll count, so the poll count can only ever
+	// Vitals are read before the poll count, so the poll count can only ever
 	// over-count the cycles those commands came from — never under-count them
 	// and turn a passing budget into a failure.
 	health := fg.countHealth()
@@ -582,35 +586,49 @@ func TestPollerHealthBudgetIsFlatInPlayerCount(t *testing.T) {
 		t.Fatal("no polls were issued at all")
 	}
 	if health > budget*polls {
-		t.Errorf("%d health commands across %d polls exceeds the budget of %d per poll",
+		t.Errorf("%d vitals commands across %d polls exceeds the budget of %d per poll",
 			health, polls, budget)
 	}
 	if health >= len(healthNames())*polls {
-		t.Errorf("%d health commands across %d polls for %d players: the cost is scaling with the roster",
+		t.Errorf("%d vitals commands across %d polls for %d players: the cost is scaling with the roster",
 			health, polls, len(healthNames()))
 	}
+	// Both vitals came out of those commands: adding stamina must not have added
+	// a command per player.
+	if n := fg.countPrefix("GetAttr "); n != 0 {
+		t.Errorf("%d single-value commands were issued; one GetAllAttr carries both vitals", n)
+	}
 
-	// Every player has a reading even though no single cycle could have asked
-	// them all: that is the cache doing its job between samples.
+	// Every player has both readings even though no single cycle could have
+	// asked them all: that is the cache doing its job between samples.
 	for _, player := range snap.Players {
 		if player.Health != liveHealth || player.MaxHealth != liveMaxHealth {
 			t.Errorf("%s health = %v/%v", player.Name, player.Health, player.MaxHealth)
 		}
 		if player.HealthPercent < 11 || player.HealthPercent > 12 {
-			t.Errorf("%s is at %v%%, want ~11.4: Health is absolute hit points and must be "+
-				"divided by MaxHealth, or a dying player renders as a healthy one",
+			t.Errorf("%s is at %v%% health, want ~11.4: the value is absolute hit points and must "+
+				"be divided by MaxHealth, or a dying player renders as a healthy one",
 				player.Name, player.HealthPercent)
 		}
+		if player.Stamina != liveStamina || player.MaxStamina != liveMaxStamina {
+			t.Errorf("%s stamina = %v/%v", player.Name, player.Stamina, player.MaxStamina)
+		}
+		if player.StaminaPercent < 13 || player.StaminaPercent > 14 {
+			t.Errorf("%s is at %v%% stamina, want ~13.3: stamina is absolute too, and its maximum "+
+				"is not always 100", player.Name, player.StaminaPercent)
+		}
 		if !player.HasPosition {
-			t.Errorf("%s lost its position to the health step", player.Name)
+			t.Errorf("%s lost its position to the vitals step", player.Name)
 		}
 	}
 }
 
-// TestPollerHealthCachesMaxHealth pins the steady state: the paginating
-// GetAllAttr is spent once per player, and only again when growth — the one
-// thing that moves a maximum — has actually moved.
-func TestPollerHealthCachesMaxHealth(t *testing.T) {
+// TestPollerHealthSpendsOneCommandPerSample pins the cost model: one command per
+// sampled player, whatever the roster has been through. The maxima ride along in
+// every answer, so there is no second question to ask and no invalidation rule
+// that can go stale — a player who grows, or a patch that rebalances a species,
+// heals on the next sample by itself.
+func TestPollerHealthSpendsOneCommandPerSample(t *testing.T) {
 	fg, client := newHealthGame(t, 0.5)
 	fixed := gondwaInfo()
 	p := NewPoller(client, testInterval, testIdleAfter, &fixed, nil, WithHealth(len(healthNames())))
@@ -619,31 +637,48 @@ func TestPollerHealthCachesMaxHealth(t *testing.T) {
 	p.Observe()
 	waitForHealth(t, p)
 
-	// Several more cycles, all of which must go the cheap way.
 	polls := fg.count(commandPlayerInfoAll)
 	waitFor(t, "three further polls", func() bool {
 		p.Observe()
 		return fg.count(commandPlayerInfoAll) >= polls+3
 	})
 
-	if n := fg.countPrefix(commandGetAllAttr); n != len(healthNames()) {
-		t.Errorf("GetAllAttr ran %d times for %d players; MaxHealth is nearly static and must be "+
-			"cached, not re-read every cycle", n, len(healthNames()))
-	}
-	if n := fg.countPrefix(commandGetAttr); n < len(healthNames()) {
-		t.Errorf("only %d cheap refreshes; the warm path is not being used", n)
+	// One attribute command per sampled player, and nothing else: no follow-up
+	// question for the second value, no re-read for a maximum.
+	samples := fg.countPrefix(commandGetAllAttr)
+	if total := fg.countHealth(); total != samples {
+		t.Errorf("%d vitals commands for %d samples; a sample must cost exactly one command",
+			total, samples)
 	}
 
-	// Growing changes the maximum, which is the one thing that must invalidate
-	// it. Everything else about the player is unchanged.
-	fg.set(commandPlayerInfoAll, rosterBody(1, healthNames()...))
-	waitFor(t, "MaxHealth to be re-read after growth", func() bool {
-		p.Observe()
-		return fg.countPrefix(commandGetAllAttr) > len(healthNames())
+	// The maxima heal without any invalidation event: the game starts reporting
+	// different ones — a rebalance, a growth spurt, a species swap — and the next
+	// sample simply carries them.
+	fg.scriptHealth(healthNames(), liveHealth, 1200, liveStamina, 400)
+	waitFor(t, "the new maxima to arrive", func() bool {
+		snap, _, _ := p.Observe()
+		if snap == nil {
+			return false
+		}
+		for _, player := range snap.Players {
+			if player.MaxHealth != 1200 || player.MaxStamina != 400 {
+				return false
+			}
+		}
+		return true
 	})
+
+	snap, _, _ := p.Observe()
+	for _, player := range snap.Players {
+		// 96.5 of 1200 is 8%, and the page must be told 8 rather than the 11 the
+		// old maximum would have produced.
+		if player.HealthPercent < 8 || player.HealthPercent > 8.1 {
+			t.Errorf("%s is at %v%% against the new maximum, want ~8.04", player.Name, player.HealthPercent)
+		}
+	}
 }
 
-// TestPollerHealthIsSilentWhileIdle is the rule health must obey exactly as
+// TestPollerHealthIsSilentWhileIdle is the rule vitals must obey exactly as
 // positions do: a map nobody is looking at costs the game nothing at all.
 func TestPollerHealthIsSilentWhileIdle(t *testing.T) {
 	fg, client := newHealthGame(t, 1)
@@ -654,7 +689,7 @@ func TestPollerHealthIsSilentWhileIdle(t *testing.T) {
 	// Nobody has asked yet, so not one attribute command may go out.
 	time.Sleep(4 * testInterval)
 	if n := fg.countHealth(); n != 0 {
-		t.Fatalf("%d health commands before any viewer arrived", n)
+		t.Fatalf("%d vitals commands before any viewer arrived", n)
 	}
 
 	p.Observe()
@@ -665,18 +700,18 @@ func TestPollerHealthIsSilentWhileIdle(t *testing.T) {
 		time.Sleep(3 * testInterval)
 		return fg.count(commandPlayerInfoAll) == before
 	})
-	// And once the viewers are gone, health goes quiet with the positions.
+	// And once the viewers are gone, vitals go quiet with the positions.
 	before := fg.countHealth()
 	time.Sleep(3 * testInterval)
 	if after := fg.countHealth(); after != before {
-		t.Errorf("health sampling continued while idle: %d -> %d", before, after)
+		t.Errorf("vitals sampling continued while idle: %d -> %d", before, after)
 	}
 }
 
 // TestPollerHealthNoPawn covers a player sitting in the menus or dead and not
 // yet respawned. The game answers "No Player Pawn." — a normal state that must
-// read as no health, leave the rest of the snapshot alone, and never surface as
-// an error on the page.
+// read as no vitals at all, leave the rest of the snapshot alone, and never
+// surface as an error on the page.
 func TestPollerHealthNoPawn(t *testing.T) {
 	fg, client := newHealthGame(t, 1)
 	fg.scriptHealthAnswer(healthNames(), "No Player Pawn.")
@@ -701,6 +736,9 @@ func TestPollerHealthNoPawn(t *testing.T) {
 		if player.HasHealth || player.HealthPercent != 0 {
 			t.Errorf("%s = %+v, want unknown health", player.Name, player)
 		}
+		if player.HasStamina || player.StaminaPercent != 0 {
+			t.Errorf("%s = %+v, want unknown stamina", player.Name, player)
+		}
 		if !player.HasPosition || player.U == 0 {
 			t.Errorf("%s lost its position: %+v", player.Name, player)
 		}
@@ -708,8 +746,8 @@ func TestPollerHealthNoPawn(t *testing.T) {
 }
 
 // TestPollerHealthUnavailableLeavesPositionsIntact is the degradation promise:
-// on a build that has never heard of these commands, the map works exactly as
-// it did before health existed.
+// on a build that has never heard of this command, the map works exactly as it
+// did before vitals existed.
 func TestPollerHealthUnavailableLeavesPositionsIntact(t *testing.T) {
 	fg, client := newHealthGame(t, 1)
 	// The fake answers unknown commands the way the game does.
@@ -732,8 +770,8 @@ func TestPollerHealthUnavailableLeavesPositionsIntact(t *testing.T) {
 		t.Fatalf("snapshot = %+v, map = %+v", snap, info)
 	}
 	for _, player := range snap.Players {
-		if player.HasHealth {
-			t.Errorf("%s claims health the game never reported: %+v", player.Name, player)
+		if player.HasHealth || player.HasStamina {
+			t.Errorf("%s claims vitals the game never reported: %+v", player.Name, player)
 		}
 		if !player.HasPosition || player.V != 0.5 {
 			t.Errorf("%s = %+v, want an intact projected position", player.Name, player)
@@ -755,7 +793,7 @@ func TestPollerHealthFailureDoesNotStarveTheRotation(t *testing.T) {
 	unaskable := strings.Repeat("x", rcon.MaxCommandLen)
 	fg, client := newFakeGame(t)
 	fg.set(commandPlayerInfoAll, rosterBody(1, append([]string{unaskable}, healthNames()...)...))
-	fg.scriptHealth(healthNames(), liveHealth, liveMaxHealth)
+	fg.scriptHealth(healthNames(), liveHealth, liveMaxHealth, liveStamina, liveMaxStamina)
 
 	fixed := gondwaInfo()
 	p := NewPoller(client, testInterval, testIdleAfter, &fixed, nil, WithHealth(len(healthNames())))
@@ -763,13 +801,13 @@ func TestPollerHealthFailureDoesNotStarveTheRotation(t *testing.T) {
 
 	p.Observe()
 	var snap *Snapshot
-	waitFor(t, "health for everyone the client will ask about", func() bool {
+	waitFor(t, "vitals for everyone the client will ask about", func() bool {
 		snap, _, _ = p.Observe()
 		if snap == nil || len(snap.Players) != len(healthNames())+1 {
 			return false
 		}
 		for _, player := range snap.Players {
-			if player.Name != unaskable && !player.HasHealth {
+			if player.Name != unaskable && (!player.HasHealth || !player.HasStamina) {
 				return false
 			}
 		}
@@ -778,19 +816,19 @@ func TestPollerHealthFailureDoesNotStarveTheRotation(t *testing.T) {
 
 	_, _, errMsg := p.Observe()
 	if errMsg != "" {
-		t.Errorf("errMsg = %q; a health failure must not label the map", errMsg)
+		t.Errorf("errMsg = %q; a vitals failure must not label the map", errMsg)
 	}
 	for _, player := range snap.Players {
 		if !player.HasPosition {
-			t.Errorf("%.8s lost its position to a health failure", player.Name)
+			t.Errorf("%.8s lost its position to a vitals failure", player.Name)
 		}
 	}
-	if snap.Players[0].HasHealth {
-		t.Error("the unaskable player reports health nobody could have read")
+	if snap.Players[0].HasHealth || snap.Players[0].HasStamina {
+		t.Error("the unaskable player reports vitals nobody could have read")
 	}
 }
 
-// TestPollerHealthOffCostsNothing is the operator's escape hatch: with health
+// TestPollerHealthOffCostsNothing is the operator's escape hatch: with vitals
 // switched off, not one attribute command is issued, ever.
 func TestPollerHealthOffCostsNothing(t *testing.T) {
 	for name, opts := range map[string][]PollerOption{
@@ -811,12 +849,12 @@ func TestPollerHealthOffCostsNothing(t *testing.T) {
 			})
 
 			if n := fg.countHealth(); n != 0 {
-				t.Errorf("%d health commands with health switched off", n)
+				t.Errorf("%d vitals commands with sampling switched off", n)
 			}
 			snap, _, _ := p.Observe()
 			for _, player := range snap.Players {
-				if player.HasHealth {
-					t.Errorf("%s carries health nobody asked for", player.Name)
+				if player.HasHealth || player.HasStamina {
+					t.Errorf("%s carries vitals nobody asked for", player.Name)
 				}
 				if !player.HasPosition {
 					t.Errorf("%s lost its position: %+v", player.Name, player)
@@ -827,7 +865,7 @@ func TestPollerHealthOffCostsNothing(t *testing.T) {
 }
 
 // TestPollerHealthNotSampledDuringAnOutage covers the other half of failure
-// containment: when the position poll itself fails, health must not go hunting
+// containment: when the position poll itself fails, vitals must not go hunting
 // for players on a server that just proved it cannot answer, and the last good
 // snapshot keeps the readings it already had.
 func TestPollerHealthNotSampledDuringAnOutage(t *testing.T) {
@@ -850,7 +888,7 @@ func TestPollerHealthNotSampledDuringAnOutage(t *testing.T) {
 	before := fg.countHealth()
 	time.Sleep(3 * testInterval)
 	if after := fg.countHealth(); after != before {
-		t.Errorf("health kept probing a server that is down: %d -> %d", before, after)
+		t.Errorf("vitals kept probing a server that is down: %d -> %d", before, after)
 	}
 
 	snap, _, _ := p.Observe()
@@ -859,6 +897,9 @@ func TestPollerHealthNotSampledDuringAnOutage(t *testing.T) {
 	}
 	if !snap.Players[0].HasHealth || snap.Players[0].HealthPercent < 11 {
 		t.Errorf("the outage cost the stale snapshot its health: %+v", snap.Players[0])
+	}
+	if !snap.Players[0].HasStamina || snap.Players[0].StaminaPercent < 13 {
+		t.Errorf("the outage cost the stale snapshot its stamina: %+v", snap.Players[0])
 	}
 }
 
