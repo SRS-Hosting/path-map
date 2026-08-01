@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/USA-RedDragon/rcon"
+	"github.com/SRS-Hosting/rcon"
 )
 
 // commandPlayerInfoAll is the data source. ListPlayerPositions would be

@@ -4,9 +4,9 @@ import (
 	"context"
 	"os"
 
+	"github.com/SRS-Hosting/path-map/internal/cmd"
+	"github.com/SRS-Hosting/path-map/internal/config"
 	"github.com/USA-RedDragon/configulator"
-	"github.com/USA-RedDragon/path-map/internal/cmd"
-	"github.com/USA-RedDragon/path-map/internal/config"
 )
 
 // https://goreleaser.com/cookbooks/using-main.version/

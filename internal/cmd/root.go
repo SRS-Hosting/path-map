@@ -8,9 +8,9 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/SRS-Hosting/path-map/internal/config"
+	"github.com/SRS-Hosting/path-map/internal/server"
 	"github.com/USA-RedDragon/configulator"
-	"github.com/USA-RedDragon/path-map/internal/config"
-	"github.com/USA-RedDragon/path-map/internal/server"
 	"github.com/lmittmann/tint"
 	"github.com/spf13/cobra"
 )

@@ -21,9 +21,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/USA-RedDragon/path-map/internal/config"
-	"github.com/USA-RedDragon/path-map/internal/players"
-	"github.com/USA-RedDragon/rcon"
+	"github.com/SRS-Hosting/path-map/internal/config"
+	"github.com/SRS-Hosting/path-map/internal/players"
+	"github.com/SRS-Hosting/rcon"
 )
 
 //go:embed assets/index.html

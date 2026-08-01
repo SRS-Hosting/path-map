@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/USA-RedDragon/path-map/internal/config"
-	"github.com/USA-RedDragon/rcon/rcontest"
+	"github.com/SRS-Hosting/path-map/internal/config"
+	"github.com/SRS-Hosting/rcon/rcontest"
 )
 
 const waitDeadline = 5 * time.Second

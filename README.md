@@ -1,6 +1,6 @@
 # path-map
 
-[![Release](https://github.com/USA-RedDragon/path-map/actions/workflows/release.yaml/badge.svg)](https://github.com/USA-RedDragon/path-map/actions/workflows/release.yaml) [![License](https://badgen.net/github/license/USA-RedDragon/path-map)](https://github.com/USA-RedDragon/path-map/blob/main/LICENSE) [![Version](https://img.shields.io/github/release/USA-RedDragon/path-map.svg)](https://github.com/USA-RedDragon/path-map/releases/) [![Coverage](.github/badges/coverage.svg)](https://github.com/USA-RedDragon/path-map/actions/workflows/test.yaml)
+[![Release](https://github.com/SRS-Hosting/path-map/actions/workflows/release.yaml/badge.svg)](https://github.com/SRS-Hosting/path-map/actions/workflows/release.yaml) [![License](https://badgen.net/github/license/SRS-Hosting/path-map)](https://github.com/SRS-Hosting/path-map/blob/main/LICENSE) [![Version](https://img.shields.io/github/release/SRS-Hosting/path-map.svg)](https://github.com/SRS-Hosting/path-map/releases/) [![Coverage](.github/badges/coverage.svg)](https://github.com/SRS-Hosting/path-map/actions/workflows/test.yaml)
 
 A live, browser-viewable player map for a self-hosted
 [Path of Titans](https://pathoftitans.com) dedicated server, read over RCON.
@@ -29,7 +29,7 @@ while nobody has the map open, your game server hears nothing.
    docker run -p 8080:8080 \
      -v /srv/pot-maps:/maps:ro \
      -e RCON_HOST=my-server -e RCON_PASSWORD=secret -e MAP_IMAGEPATH=/maps \
-     ghcr.io/usa-reddragon/path-map:latest
+     ghcr.io/srs-hosting/path-map:latest
    ```
 
 3. Open `http://localhost:8080`.
