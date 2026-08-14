@@ -1,6 +1,6 @@
 module github.com/SRS-Hosting/path-map
 
-go 1.26.5
+go 1.26.6
 
 require (
 	github.com/SRS-Hosting/rcon v0.0.4
