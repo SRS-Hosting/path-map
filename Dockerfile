@@ -2,5 +2,6 @@ FROM scratch
 
 USER 65535:65534
 
-COPY path-map /
+ARG TARGETPLATFORM
+COPY $TARGETPLATFORM/path-map /
 ENTRYPOINT ["/path-map"]
