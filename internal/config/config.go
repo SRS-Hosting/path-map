@@ -21,9 +21,11 @@ const (
 )
 
 // Config is the root configuration.
+//
+//go:generate go tool configulator -type Config
 type Config struct {
 	LogLevel LogLevel `name:"logLevel" default:"info" description:"log verbosity: debug, info, warn, or error"`
-	HTTP     HTTP     `name:"http" description:""`
+	HTTP     HTTP     `name:"http" description:"HTTP listener settings"`
 	RCON     RCON     `name:"rcon" description:"Source RCON server settings"`
 	Map      Map      `name:"map" description:"map identity, image, and world-coordinate calibration"`
 	Poller   Poller   `name:"poller" description:"background player-position polling"`
@@ -48,7 +50,7 @@ type HTTP struct {
 	// assigns YAML numbers through reflection without a range check, so a
 	// narrower field would silently wrap 70000 to 4464 and -1 to 65535 where an
 	// int lets Validate reject both.
-	Port int `name:"port" default:"8080" description:""`
+	Port int `name:"port" default:"8080" description:"TCP port to listen on"`
 }
 
 // Addr returns the listen address in host:port form.
@@ -62,7 +64,7 @@ type RCON struct {
 	// 7779 rather than the generic Source default 27015: this tool only talks
 	// to Path of Titans servers, and that is the port their RCON listens on.
 	Port     int    `name:"port" default:"7779" description:"TCP port of the Source RCON server"`
-	Password string `name:"password" description:"RCON password (required)"`
+	Password string `name:"password" secret:"true" description:"RCON password (required)"`
 	// Expressed in seconds rather than as a time.Duration because configulator
 	// parses integer fields with strconv, so a "5s" default would not load.
 	TimeoutSeconds int `name:"timeoutSeconds" default:"5" description:"deadline in seconds covering a whole RCON exchange: connect, authenticate, command, response"`
