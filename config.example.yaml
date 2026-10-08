@@ -1,0 +1,41 @@
+# Sample configuration for Config.
+# log verbosity: debug, info, warn, or error
+logLevel: "info"
+# HTTP listener settings
+http:
+  # address to listen on; empty listens on all interfaces over both IPv4 and IPv6
+  # bind: ""
+  # TCP port to listen on
+  port: 8080
+# Source RCON server settings
+rcon:
+  # hostname or IP of the Source RCON server
+  host: "127.0.0.1"
+  # TCP port of the Source RCON server
+  port: 7779
+  # RCON password (required)
+  # password: "(secret)"
+  # deadline in seconds covering a whole RCON exchange: connect, authenticate, command, response
+  timeoutSeconds: 5
+  # maximum RCON commands in flight at once
+  maxConcurrent: 4
+# map identity, image, and world-coordinate calibration
+map:
+  # map the server runs: auto (detect over RCON), gondwa (aka island), panjura, riparia, or a custom name with both half extents set
+  name: "auto"
+  # map background image: a PNG file, or a directory holding <map>.png per map (required)
+  # imagePath: ""
+  # world half extent on the X axis in Unreal units; 0 uses the named map's calibrated value
+  halfExtentX: 0
+  # world half extent on the Y axis in Unreal units; 0 uses the named map's calibrated value
+  halfExtentY: 0
+# background player-position polling
+poller:
+  # seconds between player polls while the map has viewers
+  intervalSeconds: 10
+  # seconds without a browser request after which polling stops
+  idleAfterSeconds: 30
+  # sample player vitals (health and stamina) while the map has viewers
+  health: true
+  # players whose vitals are sampled per poll; vitals age between samples, positions do not
+  healthPerPoll: 4

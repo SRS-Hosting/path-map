@@ -39,37 +39,39 @@ while nobody has the map open, your game server hears nothing.
 
 ## Configuration
 
-Configuration comes from `config.yaml`, environment variables (`_` joins
-nesting), or flags. `rcon.password` is required; everything else has a
+Configuration comes from `config.yaml` (see
+[`config.example.yaml`](config.example.yaml)), environment variables (`_`
+joins nesting), or flags. `rcon.password` is required; everything else has a
 default.
 
-| Key | Env | Default | |
-|---|---|---|---|
-| `logLevel` | `LOGLEVEL` | `info` | debug, info, warn, error |
-| `http.bind` | `HTTP_BIND` | *(all interfaces)* | |
-| `http.port` | `HTTP_PORT` | `8080` | |
-| `rcon.host` | `RCON_HOST` | `127.0.0.1` | |
-| `rcon.port` | `RCON_PORT` | `7779` | Path of Titans' RCON port |
-| `rcon.password` | `RCON_PASSWORD` | — | required |
-| `rcon.timeoutSeconds` | `RCON_TIMEOUTSECONDS` | `5` | whole-exchange deadline |
-| `rcon.maxConcurrent` | `RCON_MAXCONCURRENT` | `4` | |
-| `map.name` | `MAP_NAME` | `auto` | auto, gondwa/island, panjura, riparia, or custom |
-| `map.imagePath` | `MAP_IMAGEPATH` | — | required; PNG file or per-map directory |
-| `map.halfExtentX` | `MAP_HALFEXTENTX` | `0` | override; 0 = use the map's calibrated value |
-| `map.halfExtentY` | `MAP_HALFEXTENTY` | `0` | |
-| `poller.intervalSeconds` | `POLLER_INTERVALSECONDS` | `10` | |
-| `poller.idleAfterSeconds` | `POLLER_IDLEAFTERSECONDS` | `30` | |
-| `poller.health` | `POLLER_HEALTH` | `true` | sample player vitals (health and stamina) |
-| `poller.healthPerPoll` | `POLLER_HEALTHPERPOLL` | `4` | players whose vitals are sampled per poll |
+<!-- configulator:begin -->
+
+| Key                       | Type    | Default     | Environment               | Flag                        | Description                                                                                                                      |
+|---------------------------|---------|-------------|---------------------------|-----------------------------|----------------------------------------------------------------------------------------------------------------------------------|
+| `logLevel`                | string  | `info`      | `LOGLEVEL`                | `--logLevel`                | log verbosity: debug, info, warn, or error                                                                                       |
+| `http.bind`               | string  |             | `HTTP_BIND`               | `--http.bind`               | address to listen on; empty listens on all interfaces over both IPv4 and IPv6                                                    |
+| `http.port`               | integer | `8080`      | `HTTP_PORT`               | `--http.port`               | TCP port to listen on                                                                                                            |
+| `rcon.host`               | string  | `127.0.0.1` | `RCON_HOST`               | `--rcon.host`               | hostname or IP of the Source RCON server                                                                                         |
+| `rcon.port`               | integer | `7779`      | `RCON_PORT`               | `--rcon.port`               | TCP port of the Source RCON server                                                                                               |
+| `rcon.password`           | string  |             | `RCON_PASSWORD`           | `--rcon.password`           | RCON password (required) (secret)                                                                                                |
+| `rcon.timeoutSeconds`     | integer | `5`         | `RCON_TIMEOUTSECONDS`     | `--rcon.timeoutSeconds`     | deadline in seconds covering a whole RCON exchange: connect, authenticate, command, response                                     |
+| `rcon.maxConcurrent`      | integer | `4`         | `RCON_MAXCONCURRENT`      | `--rcon.maxConcurrent`      | maximum RCON commands in flight at once                                                                                          |
+| `map.name`                | string  | `auto`      | `MAP_NAME`                | `--map.name`                | map the server runs: auto (detect over RCON), gondwa (aka island), panjura, riparia, or a custom name with both half extents set |
+| `map.imagePath`           | string  |             | `MAP_IMAGEPATH`           | `--map.imagePath`           | map background image: a PNG file, or a directory holding <map>.png per map (required)                                            |
+| `map.halfExtentX`         | number  | `0`         | `MAP_HALFEXTENTX`         | `--map.halfExtentX`         | world half extent on the X axis in Unreal units; 0 uses the named map's calibrated value                                         |
+| `map.halfExtentY`         | number  | `0`         | `MAP_HALFEXTENTY`         | `--map.halfExtentY`         | world half extent on the Y axis in Unreal units; 0 uses the named map's calibrated value                                         |
+| `poller.intervalSeconds`  | integer | `10`        | `POLLER_INTERVALSECONDS`  | `--poller.intervalSeconds`  | seconds between player polls while the map has viewers                                                                           |
+| `poller.idleAfterSeconds` | integer | `30`        | `POLLER_IDLEAFTERSECONDS` | `--poller.idleAfterSeconds` | seconds without a browser request after which polling stops                                                                      |
+| `poller.health`           | boolean | `true`      | `POLLER_HEALTH`           | `--poller.health`           | sample player vitals (health and stamina) while the map has viewers                                                              |
+| `poller.healthPerPoll`    | integer | `4`         | `POLLER_HEALTHPERPOLL`    | `--poller.healthPerPoll`    | players whose vitals are sampled per poll; vitals age between samples, positions do not                                          |
+
+<!-- configulator:end -->
 
 - The map is auto-detected by default; set `map.name` to pin it. The
   official maps have calibrated world-to-image coordinates built in
   (`island` is accepted for Gondwa — it is the `ServerMap` name in
   `Game.ini`). A custom or modded map works with any name plus **both**
   `map.halfExtent*` values.
-- YAML caveat: the half extents are floats, and a YAML **integer** is
-  rejected — write `504000.0`, not `504000`. Environment variables and flags
-  are unaffected.
 
 ## Behaviour worth knowing
 
