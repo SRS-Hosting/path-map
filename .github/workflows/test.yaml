@@ -134,7 +134,7 @@ jobs:
 
       - name: Report coverage
         if: always()
-        uses: USA-RedDragon/reusable-actions/coverage@0e8ed63da87a9532b124e118b6be03f61ad2b9ff # v2.0.28
+        uses: USA-RedDragon/reusable-actions/coverage@9e98bee4aee24c7fe3199099bd0329d2deee8985 # v2.0.29
         with:
           file: coverage.out
           token: ${{ steps.app-token.outputs.token }}

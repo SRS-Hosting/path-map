@@ -46,11 +46,7 @@ const maxPort = 65535
 // HTTP configures the HTTP listener
 type HTTP struct {
 	Bind string `name:"bind" default:"" description:"address to listen on; empty listens on all interfaces over both IPv4 and IPv6"`
-	// Ports and timeouts are plain ints rather than sized types: configulator
-	// assigns YAML numbers through reflection without a range check, so a
-	// narrower field would silently wrap 70000 to 4464 and -1 to 65535 where an
-	// int lets Validate reject both.
-	Port int `name:"port" default:"8080" description:"TCP port to listen on"`
+	Port int    `name:"port" default:"8080" description:"TCP port to listen on"`
 }
 
 // Addr returns the listen address in host:port form.
@@ -63,11 +59,9 @@ type RCON struct {
 	Host string `name:"host" default:"127.0.0.1" description:"hostname or IP of the Source RCON server"`
 	// 7779 rather than the generic Source default 27015: this tool only talks
 	// to Path of Titans servers, and that is the port their RCON listens on.
-	Port     int    `name:"port" default:"7779" description:"TCP port of the Source RCON server"`
-	Password string `name:"password" secret:"true" description:"RCON password (required)"`
-	// Expressed in seconds rather than as a time.Duration because configulator
-	// parses integer fields with strconv, so a "5s" default would not load.
-	TimeoutSeconds int `name:"timeoutSeconds" default:"5" description:"deadline in seconds covering a whole RCON exchange: connect, authenticate, command, response"`
+	Port           int    `name:"port" default:"7779" description:"TCP port of the Source RCON server"`
+	Password       string `name:"password" secret:"true" description:"RCON password (required)"`
+	TimeoutSeconds int    `name:"timeoutSeconds" default:"5" description:"deadline in seconds covering a whole RCON exchange: connect, authenticate, command, response"`
 	// Source servers handle RCON on the main thread and ban clients that pile on
 	// connections, so the useful value here is small. The poller runs one
 	// command at a time and waits out a busy slot; this is headroom, not a
@@ -212,8 +206,6 @@ const MaxHealthPerPoll = 32
 // commands execute on the game thread, so this cadence is a direct tax on the
 // server's tick budget; polling stops entirely while nobody is watching.
 type Poller struct {
-	// Expressed in seconds rather than as a time.Duration because configulator
-	// parses integer fields with strconv, so a "10s" default would not load.
 	IntervalSeconds int `name:"intervalSeconds" default:"10" description:"seconds between player polls while the map has viewers"`
 	// Compared against the time of the last browser request. Hidden tabs stop
 	// requesting, so this is what turns "nobody is watching" into zero RCON
