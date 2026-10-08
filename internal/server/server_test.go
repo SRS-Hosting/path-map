@@ -705,6 +705,7 @@ func TestRunStopsPoller(t *testing.T) {
 		return fg.playerPolls() > 0
 	})
 
+	http.DefaultClient.CloseIdleConnections()
 	cancel()
 	select {
 	case err := <-done:
