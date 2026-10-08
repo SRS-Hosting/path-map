@@ -45,7 +45,7 @@ const maxPort = 65535
 
 // HTTP configures the HTTP listener
 type HTTP struct {
-	Bind string `name:"bind" default:"" description:"address to listen on; empty listens on all interfaces over both IPv4 and IPv6"`
+	Bind string `name:"bind" description:"address to listen on; empty listens on all interfaces over both IPv4 and IPv6"`
 	Port int    `name:"port" default:"8080" description:"TCP port to listen on"`
 }
 
