@@ -76,7 +76,7 @@ func TestParseRecordSeparators(t *testing.T) {
 				t.Errorf("Complete = false (total %d)", s.Total)
 			}
 			assertGolden(t, s.Players[0])
-			if s.Players[1].Name != "rex" || s.Players[1].Growth != 0.75 {
+			if s.Players[1].Name != nameRex || s.Players[1].Growth != 0.75 {
 				t.Errorf("second player = %+v", s.Players[1])
 			}
 		})
@@ -100,7 +100,7 @@ func TestParseBareRecords(t *testing.T) {
 		t.Errorf("complete = %v, total = %d", s.Complete, s.Total)
 	}
 	assertGolden(t, s.Players[0])
-	if s.Players[1].Name != "rex" || s.Players[1].Role != "Moderator" || !s.Players[1].HasPosition {
+	if s.Players[1].Name != nameRex || s.Players[1].Role != "Moderator" || !s.Players[1].HasPosition {
 		t.Errorf("second player = %+v", s.Players[1])
 	}
 }
@@ -182,7 +182,7 @@ func TestParseMissingLocation(t *testing.T) {
 }
 
 func TestParseGarbage(t *testing.T) {
-	for _, raw := range []string{"", "That command does not exist", "Total Players: 0."} {
+	for _, raw := range []string{"", unknownCommand, "Total Players: 0."} {
 		s := Parse(raw)
 		if len(s.Players) != 0 {
 			t.Errorf("Parse(%q) found %d players", raw, len(s.Players))
@@ -209,9 +209,9 @@ func TestUV(t *testing.T) {
 		name         string
 		halfX, halfY float64
 	}{
-		{"gondwa", 403446.75, 403857.03},
-		{"panjura", 504000, 504000},
-		{"riparia", 257650, 257650},
+		{mapGondwa, 403446.75, 403857.03},
+		{mapPanjura, 504000, 504000},
+		{mapRiparia, 257650, 257650},
 	}
 	for _, m := range maps {
 		t.Run(m.name, func(t *testing.T) {
@@ -250,7 +250,7 @@ func TestFingerprintKeys(t *testing.T) {
 	// Detect returns these keys and the server resolves them through
 	// config.MapPresetByName; the two tables drifting apart would make
 	// detection succeed and resolution fail.
-	want := map[string]bool{"gondwa": true, "panjura": true, "riparia": true}
+	want := map[string]bool{mapGondwa: true, mapPanjura: true, mapRiparia: true}
 	got := fingerprints()
 	if len(got) != len(want) {
 		t.Fatalf("fingerprints has %d maps, want %d", len(got), len(want))
@@ -275,17 +275,17 @@ func TestDetect(t *testing.T) {
 		{
 			"gondwa display names with echo",
 			"(ListPOI): Impact Crater, Grand Plains, Titan's Pass, Savanna Grassland, Salt Flats, Burned Forest, Red Island, Stego Mountain",
-			"gondwa", true,
+			mapGondwa, true,
 		},
 		{
 			"riparia internal names",
 			"DryFangCanyon, CliffEdgeFalls, WollemiForest, TwistedForest, VolcanoIslands, WindTunnels",
-			"riparia", true,
+			mapRiparia, true,
 		},
 		{
 			"panjura display names",
 			"Grassland Crater, Arc Mountain, The Mire, Blackwater Bayou, Tyrants Gorge, Star Ravine",
-			"panjura", true,
+			mapPanjura, true,
 		},
 		{
 			// Snake Gully, Triad Falls and Hunter(')s Thicket exist on both
@@ -295,7 +295,7 @@ func TestDetect(t *testing.T) {
 			"Snake Gully, Triad Falls, Hunters Thicket",
 			"", false,
 		},
-		{"garbage", "That command does not exist", "", false},
+		{"garbage", unknownCommand, "", false},
 		{"empty", "", "", false},
 		{"too few names", "Impact Crater, Grand Plains", "", false},
 		{

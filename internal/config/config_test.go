@@ -7,12 +7,30 @@ import (
 	"time"
 )
 
+const (
+	mapGondwa     = "gondwa"
+	displayGondwa = "Gondwa"
+	imageDir      = "maps"
+	imageGondwa   = "gondwa.png"
+)
+
+// Option keys that Validate names in its errors.
+const (
+	keyHTTPPort            = "http.port"
+	keyRCONPort            = "rcon.port"
+	keyRCONTimeout         = "rcon.timeoutSeconds"
+	keyMapName             = "map.name"
+	keyPollerInterval      = "poller.intervalSeconds"
+	keyPollerIdleAfter     = "poller.idleAfterSeconds"
+	keyPollerHealthPerPoll = "poller.healthPerPoll"
+)
+
 func valid() Config {
 	return Config{
 		LogLevel: LogLevelInfo,
 		HTTP:     HTTP{Bind: "", Port: 8080},
 		RCON:     RCON{Host: "127.0.0.1", Port: 7779, Password: "secret", TimeoutSeconds: 5, MaxConcurrent: 4},
-		Map:      Map{Name: "gondwa", ImagePath: "gondwa.png"},
+		Map:      Map{Name: mapGondwa, ImagePath: imageGondwa},
 		Poller:   Poller{IntervalSeconds: 10, IdleAfterSeconds: 30, Health: true, HealthPerPoll: 4},
 	}
 }
@@ -32,20 +50,20 @@ func TestValidateRangeChecks(t *testing.T) {
 		mutef func(*Config)
 		want  string
 	}{
-		{"port too high", func(c *Config) { c.HTTP.Port = 70000 }, "http.port"},
-		{"port negative", func(c *Config) { c.HTTP.Port = -1 }, "http.port"},
-		{"port zero", func(c *Config) { c.HTTP.Port = 0 }, "http.port"},
-		{"rcon port too high", func(c *Config) { c.RCON.Port = 65536 }, "rcon.port"},
-		{"rcon port negative", func(c *Config) { c.RCON.Port = -8080 }, "rcon.port"},
-		{"timeout zero", func(c *Config) { c.RCON.TimeoutSeconds = 0 }, "rcon.timeoutSeconds"},
-		{"timeout negative", func(c *Config) { c.RCON.TimeoutSeconds = -1 }, "rcon.timeoutSeconds"},
-		{"timeout too high", func(c *Config) { c.RCON.TimeoutSeconds = 65537 }, "rcon.timeoutSeconds"},
+		{"port too high", func(c *Config) { c.HTTP.Port = 70000 }, keyHTTPPort},
+		{"port negative", func(c *Config) { c.HTTP.Port = -1 }, keyHTTPPort},
+		{"port zero", func(c *Config) { c.HTTP.Port = 0 }, keyHTTPPort},
+		{"rcon port too high", func(c *Config) { c.RCON.Port = 65536 }, keyRCONPort},
+		{"rcon port negative", func(c *Config) { c.RCON.Port = -8080 }, keyRCONPort},
+		{"timeout zero", func(c *Config) { c.RCON.TimeoutSeconds = 0 }, keyRCONTimeout},
+		{"timeout negative", func(c *Config) { c.RCON.TimeoutSeconds = -1 }, keyRCONTimeout},
+		{"timeout too high", func(c *Config) { c.RCON.TimeoutSeconds = 65537 }, keyRCONTimeout},
 		{"no password", func(c *Config) { c.RCON.Password = "" }, "rcon.password"},
 		{"no host", func(c *Config) { c.RCON.Host = "" }, "rcon.host"},
 		{"bad log level", func(c *Config) { c.LogLevel = "silly" }, "logLevel"},
-		{"no map name", func(c *Config) { c.Map.Name = "" }, "map.name"},
+		{"no map name", func(c *Config) { c.Map.Name = "" }, keyMapName},
 		{"no image path", func(c *Config) { c.Map.ImagePath = "" }, "map.imagePath"},
-		{"unknown map without extents", func(c *Config) { c.Map.Name = "spiro" }, "map.name"},
+		{"unknown map without extents", func(c *Config) { c.Map.Name = "spiro" }, keyMapName},
 		{"auto with extents", func(c *Config) {
 			c.Map.Name = "auto"
 			c.Map.HalfExtentX, c.Map.HalfExtentY = 100, 100
@@ -53,21 +71,21 @@ func TestValidateRangeChecks(t *testing.T) {
 		{"one-sided extent", func(c *Config) { c.Map.HalfExtentX = 100 }, "map.halfExtentY"},
 		{"negative extent", func(c *Config) { c.Map.HalfExtentX, c.Map.HalfExtentY = -1, 100 }, "map.halfExtentX"},
 		{"NaN extent", func(c *Config) { c.Map.HalfExtentX, c.Map.HalfExtentY = math.NaN(), 100 }, "map.halfExtentX"},
-		{"interval zero", func(c *Config) { c.Poller.IntervalSeconds = 0 }, "poller.intervalSeconds"},
-		{"interval too high", func(c *Config) { c.Poller.IntervalSeconds = MaxPollIntervalSeconds + 1 }, "poller.intervalSeconds"},
-		{"idle below interval", func(c *Config) { c.Poller.IdleAfterSeconds = 5 }, "poller.idleAfterSeconds"},
-		{"idle too high", func(c *Config) { c.Poller.IdleAfterSeconds = MaxIdleAfterSeconds + 1 }, "poller.idleAfterSeconds"},
+		{"interval zero", func(c *Config) { c.Poller.IntervalSeconds = 0 }, keyPollerInterval},
+		{"interval too high", func(c *Config) { c.Poller.IntervalSeconds = MaxPollIntervalSeconds + 1 }, keyPollerInterval},
+		{"idle below interval", func(c *Config) { c.Poller.IdleAfterSeconds = 5 }, keyPollerIdleAfter},
+		{"idle too high", func(c *Config) { c.Poller.IdleAfterSeconds = MaxIdleAfterSeconds + 1 }, keyPollerIdleAfter},
 		// Health is switched off with poller.health, never by budgeting zero
 		// players: a zero here is a typo that would silently drop the feature.
-		{"health budget zero", func(c *Config) { c.Poller.HealthPerPoll = 0 }, "poller.healthPerPoll"},
-		{"health budget negative", func(c *Config) { c.Poller.HealthPerPoll = -4 }, "poller.healthPerPoll"},
-		{"health budget too high", func(c *Config) { c.Poller.HealthPerPoll = MaxHealthPerPoll + 1 }, "poller.healthPerPoll"},
+		{"health budget zero", func(c *Config) { c.Poller.HealthPerPoll = 0 }, keyPollerHealthPerPoll},
+		{"health budget negative", func(c *Config) { c.Poller.HealthPerPoll = -4 }, keyPollerHealthPerPoll},
+		{"health budget too high", func(c *Config) { c.Poller.HealthPerPoll = MaxHealthPerPoll + 1 }, keyPollerHealthPerPoll},
 		// And it is checked even when health is off, so the operator who turns
 		// health on later does not inherit a broken value.
 		{"health budget zero while off", func(c *Config) {
 			c.Poller.Health = false
 			c.Poller.HealthPerPoll = 0
-		}, "poller.healthPerPoll"},
+		}, keyPollerHealthPerPoll},
 	}
 
 	for _, tc := range tests {
@@ -94,8 +112,8 @@ func TestValidateReportsEveryProblem(t *testing.T) {
 		t.Fatal("empty config was accepted")
 	}
 	for _, want := range []string{
-		"logLevel", "http.port", "rcon.host", "rcon.port", "rcon.password", "rcon.timeoutSeconds",
-		"map.name", "map.imagePath", "poller.intervalSeconds", "poller.idleAfterSeconds",
+		"logLevel", keyHTTPPort, "rcon.host", keyRCONPort, "rcon.password", keyRCONTimeout,
+		keyMapName, "map.imagePath", keyPollerInterval, keyPollerIdleAfter,
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %q:\n%v", want, err)
@@ -134,17 +152,17 @@ func TestMapPresets(t *testing.T) {
 		wantY       float64
 		wantImage   string
 	}{
-		{"gondwa", "Gondwa", 403446.75, 403857.03, "gondwa.png"},
-		{"Gondwa", "Gondwa", 403446.75, 403857.03, "gondwa.png"},
+		{mapGondwa, displayGondwa, 403446.75, 403857.03, imageGondwa},
+		{displayGondwa, displayGondwa, 403446.75, 403857.03, imageGondwa},
 		// Game.ini says ServerMap=Island; that spelling must work.
-		{"island", "Gondwa", 403446.75, 403857.03, "gondwa.png"},
-		{"ISLAND", "Gondwa", 403446.75, 403857.03, "gondwa.png"},
+		{"island", displayGondwa, 403446.75, 403857.03, imageGondwa},
+		{"ISLAND", displayGondwa, 403446.75, 403857.03, imageGondwa},
 		{"panjura", "Panjura", 504000, 504000, "panjura.png"},
 		{"riparia", "Riparia", 257650, 257650, "riparia.png"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			m := Map{Name: tc.name, ImagePath: "maps"}
+			m := Map{Name: tc.name, ImagePath: imageDir}
 			x, y := m.Extents()
 			if x != tc.wantX || y != tc.wantY {
 				t.Errorf("Extents() = %v, %v, want %v, %v", x, y, tc.wantX, tc.wantY)
@@ -156,7 +174,7 @@ func TestMapPresets(t *testing.T) {
 				t.Errorf("ImageFile() = %q, want %q", got, tc.wantImage)
 			}
 			cfg := valid()
-			cfg.Map = Map{Name: tc.name, ImagePath: "maps"}
+			cfg.Map = Map{Name: tc.name, ImagePath: imageDir}
 			if err := cfg.Validate(); err != nil {
 				t.Errorf("preset name rejected: %v", err)
 			}
@@ -165,14 +183,14 @@ func TestMapPresets(t *testing.T) {
 
 	// Explicit overrides beat the preset, so a recalibration is a config
 	// change rather than a release.
-	m := Map{Name: "gondwa", ImagePath: "maps", HalfExtentX: 100, HalfExtentY: 200}
+	m := Map{Name: mapGondwa, ImagePath: imageDir, HalfExtentX: 100, HalfExtentY: 200}
 	if x, y := m.Extents(); x != 100 || y != 200 {
 		t.Errorf("overridden Extents() = %v, %v, want 100, 200", x, y)
 	}
 
 	// A custom map is the override escape hatch: any name plus both extents.
 	cfg := valid()
-	cfg.Map = Map{Name: "Spiro", ImagePath: "maps", HalfExtentX: 100, HalfExtentY: 100}
+	cfg.Map = Map{Name: "Spiro", ImagePath: imageDir, HalfExtentX: 100, HalfExtentY: 100}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("custom map with both extents rejected: %v", err)
 	}
@@ -185,7 +203,7 @@ func TestMapPresets(t *testing.T) {
 
 	// The default is detection, and it must validate out of the box.
 	cfg = valid()
-	cfg.Map = Map{Name: "auto", ImagePath: "maps"}
+	cfg.Map = Map{Name: "auto", ImagePath: imageDir}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("auto rejected: %v", err)
 	}

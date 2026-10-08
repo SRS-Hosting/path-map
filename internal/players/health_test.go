@@ -106,7 +106,7 @@ func TestParseAttrsNoPawn(t *testing.T) {
 func TestParseAttrsGarbage(t *testing.T) {
 	for _, raw := range []string{
 		"",
-		"That command does not exist",
+		unknownCommand,
 		"(GetAttr kittykat95 Health): Property health is banana.",
 		// A page seam landing mid-key, and keys with no values at all.
 		"(GetAllAttr kittykat95): LocomotionState=3.000000, Hea",
@@ -285,11 +285,11 @@ func TestApplyHealthLeavesUnsampledPlayersUnknown(t *testing.T) {
 		goldenAGID: {health: reading(96.534752, 850), stamina: reading(33.199955, 100), sampledAt: time.Now()},
 		// Health arrived without its maximum and stamina arrived whole: no health
 		// percentage is computable, so health is unknown while stamina is not.
-		"111-222-333": {health: vital{value: 40, hasValue: true}, stamina: reading(50, 200), sampledAt: time.Now()},
+		agidRex: {health: vital{value: 40, hasValue: true}, stamina: reading(50, 200), sampledAt: time.Now()},
 	}}
 	list := []Player{
 		{Name: goldenName, AGID: goldenAGID},
-		{Name: "rex", AGID: "111-222-333"},
+		{Name: nameRex, AGID: agidRex},
 		{Name: "newcomer", AGID: "999-999-999"},
 	}
 	p.applyHealth(list, time.Now())
@@ -325,8 +325,8 @@ func TestApplyHealthLeavesUnsampledPlayersUnknown(t *testing.T) {
 func TestPruneHealthKeepsPartialRosters(t *testing.T) {
 	entries := func() map[string]healthEntry {
 		return map[string]healthEntry{
-			goldenAGID:    {health: reading(96.5, 850)},
-			"111-222-333": {health: reading(40, 850)},
+			goldenAGID: {health: reading(96.5, 850)},
+			agidRex:    {health: reading(40, 850)},
 		}
 	}
 	list := []Player{{Name: goldenName, AGID: goldenAGID}}
@@ -361,7 +361,7 @@ func TestHealthTargetsRotate(t *testing.T) {
 		{Name: "a", AGID: "a"},
 		{Name: "b", AGID: "b"},
 		{Name: "c", AGID: "c"},
-		{Name: "fresh", AGID: "fresh"},
+		{Name: nameFresh, AGID: nameFresh},
 		// No name, so no command can name them: they are not a target at all.
 		{AGID: "nameless"},
 	}
@@ -370,7 +370,7 @@ func TestHealthTargetsRotate(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("picked %d targets, want the budget of 2", len(got))
 	}
-	if list[got[0]].Name != "fresh" {
+	if list[got[0]].Name != nameFresh {
 		t.Errorf("first target is %q, want the never-sampled player", list[got[0]].Name)
 	}
 	if list[got[1]].Name != "c" {

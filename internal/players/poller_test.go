@@ -18,6 +18,15 @@ const testPassword = "pw"
 const (
 	mapGondwa  = "gondwa"
 	mapPanjura = "panjura"
+	mapRiparia = "riparia"
+)
+
+// Fixtures shared across the players tests.
+const (
+	nameRex        = "rex"
+	agidRex        = "111-222-333"
+	nameFresh      = "fresh"
+	unknownCommand = "That command does not exist"
 )
 
 // Poll cadences are compressed for tests; the waits below are generous so a
@@ -95,7 +104,7 @@ func (fg *fakeGame) respond(command string) string {
 	if body, ok := fg.responses[command]; ok {
 		return body
 	}
-	return "That command does not exist"
+	return unknownCommand
 }
 
 func (fg *fakeGame) set(command, body string) {
@@ -531,7 +540,7 @@ const (
 
 // healthNames is a four-player roster: more than any budget these tests grant,
 // so "one cycle cannot cover everyone" is the case under test.
-func healthNames() []string { return []string{"kittykat95", "rex", "trike", "ptera"} }
+func healthNames() []string { return []string{"kittykat95", nameRex, "trike", "ptera"} }
 
 // newHealthGame is a fake game with a roster and the attribute answer for every
 // player in it.
@@ -751,7 +760,7 @@ func TestPollerHealthNoPawn(t *testing.T) {
 func TestPollerHealthUnavailableLeavesPositionsIntact(t *testing.T) {
 	fg, client := newHealthGame(t, 1)
 	// The fake answers unknown commands the way the game does.
-	fg.scriptHealthAnswer(healthNames(), "That command does not exist")
+	fg.scriptHealthAnswer(healthNames(), unknownCommand)
 	fixed := gondwaInfo()
 	p := NewPoller(client, testInterval, testIdleAfter, &fixed, nil, WithHealth(len(healthNames())))
 	startPoller(t, p)

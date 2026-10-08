@@ -20,6 +20,8 @@ import (
 
 const waitDeadline = 5 * time.Second
 
+const mapGondwa = "gondwa"
+
 // The canned PlayerInfoAll uses the verified live layout — the command
 // echoed once with the Total on the same line, then one bare record per
 // line — spanning three pages under one series-wide key, tearing
@@ -173,7 +175,7 @@ func testConfig(t *testing.T, rconAddr string) *config.Config {
 		LogLevel: config.LogLevelInfo,
 		HTTP:     config.HTTP{Bind: "127.0.0.1", Port: 8080},
 		RCON:     config.RCON{Host: host, Port: port, Password: "pw", TimeoutSeconds: 5, MaxConcurrent: 4},
-		Map:      config.Map{Name: "gondwa", ImagePath: writeTestImage(t)},
+		Map:      config.Map{Name: mapGondwa, ImagePath: writeTestImage(t)},
 		Poller:   config.Poller{IntervalSeconds: 1, IdleAfterSeconds: 2, Health: true, HealthPerPoll: 4},
 	}
 }
@@ -209,7 +211,7 @@ func startPoller(t *testing.T, s *Server) {
 func getRec(t *testing.T, s *Server, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	s.http.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	s.http.Handler.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 	return rec
 }
 
@@ -306,7 +308,7 @@ func TestRoutes(t *testing.T) {
 		{http.MethodPost, "/map.png"},
 	} {
 		rec := httptest.NewRecorder()
-		s.http.Handler.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, nil))
+		s.http.Handler.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil))
 		if rec.Code == http.StatusOK {
 			t.Errorf("%s %s unexpectedly returned 200", tc.method, tc.path)
 		}
@@ -351,7 +353,7 @@ func TestPlayersEndpointPending(t *testing.T) {
 		t.Errorf("generatedAt = %v before any poll", got.GeneratedAt)
 	}
 	// An explicitly configured map is known before any RCON traffic.
-	if got.Map == nil || got.Map.Name != "gondwa" {
+	if got.Map == nil || got.Map.Name != mapGondwa {
 		t.Errorf("map = %+v, want the configured map", got.Map)
 	}
 
@@ -581,7 +583,7 @@ func TestMapImage(t *testing.T) {
 		t.Fatal("no ETag on the map image")
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/map.png", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/map.png", nil)
 	req.Header.Set("If-None-Match", etag)
 	rec = httptest.NewRecorder()
 	s.http.Handler.ServeHTTP(rec, req)
@@ -663,7 +665,7 @@ func TestAutoDetectEndToEnd(t *testing.T) {
 		_, got = getPlayers(t, s)
 		return got.Map != nil && len(got.Players) == 2
 	})
-	if got.Map.Name != "gondwa" || got.Map.DisplayName != "Gondwa" {
+	if got.Map.Name != mapGondwa || got.Map.DisplayName != "Gondwa" {
 		t.Errorf("detected map = %+v", got.Map)
 	}
 	if u := got.Players[0].U; u < 0.41 || u > 0.42 {
